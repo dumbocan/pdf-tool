@@ -9,3 +9,6 @@ services:
       MAX_RESPONSE_BYTES: ${MAX_RESPONSE_BYTES:-1048576}
       AUTH_TOKEN: ${AUTH_TOKEN:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-https://api.minimax.io/v1}
+      MINIMAX_MODEL: ${MINIMAX_MODEL:-MiniMax-M3}

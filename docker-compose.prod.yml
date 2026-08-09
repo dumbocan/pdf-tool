@@ -3,3 +3,8 @@ services:
     restart: unless-stopped
     environment:
       AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN must be set for production}
+      # Optional: unsetting MINIMAX_API_KEY disables /extract-with-llm (503)
+      # while /extract stays intact (documented rollback path).
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-https://api.minimax.io/v1}
+      MINIMAX_MODEL: ${MINIMAX_MODEL:-MiniMax-M3}

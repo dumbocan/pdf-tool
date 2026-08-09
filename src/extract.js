@@ -336,7 +336,7 @@ export async function extractTextFromPdf(buffer, options = {}) {
   const pagesToRead = Math.min(declaredPages || maxPages, maxPages);
   const pieces = [];
   let totalChars = 0;
-  let anyTruncated = false;
+  let charLimitHit = false;
 
   try {
     for (let pageNumber = 1; pageNumber <= pagesToRead; pageNumber += 1) {
@@ -350,15 +350,15 @@ export async function extractTextFromPdf(buffer, options = {}) {
         page = await doc.getPage(pageNumber);
       } catch {
         // Skip unreadable pages but keep going so the operator still sees
-        // whatever survived.
-        anyTruncated = true;
+        // whatever survived. Unreadable-page skips are best-effort
+        // continuation and never set `truncated` on their own (the flag is
+        // limit-based: pageLimitHit || charLimitHit).
         continue;
       }
       let content;
       try {
         content = await page.getTextContent({ disableCombineTextItems: false });
       } catch {
-        anyTruncated = true;
         continue;
       }
       const items = Array.isArray(content?.items) ? content.items : [];
@@ -366,13 +366,13 @@ export async function extractTextFromPdf(buffer, options = {}) {
       if (!pageText) continue;
       const remaining = Math.max(0, maxChars - totalChars);
       if (remaining === 0) {
-        anyTruncated = true;
+        charLimitHit = true;
         break;
       }
       const slice = pageText.slice(0, Math.min(MAX_PER_PAGE_CHARS, remaining));
       pieces.push(slice);
       totalChars += slice.length;
-      if (pageText.length > slice.length || totalChars >= maxChars) anyTruncated = true;
+      if (pageText.length > slice.length || totalChars >= maxChars) charLimitHit = true;
     }
   } finally {
     try {
@@ -387,12 +387,28 @@ export async function extractTextFromPdf(buffer, options = {}) {
     }
   }
 
-  const joined = pieces.join("\n\n").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
-  const { text, truncated } = truncate(joined, maxChars);
-  return {
-    text,
-    pages: pagesToRead,
-    truncated: truncated || anyTruncated,
-    invoiceFields: extractInvoiceFields(joined),
-  };
-}
+      const joined = pieces.join("\n\n").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+      const { text, truncated: finalTruncated } = truncate(joined, maxChars);
+      if (finalTruncated) charLimitHit = true;
+
+      // Limit-based truncation decision (contract): the page limit is engaged
+      // when the document declares more pages than we read; the char limit is
+      // engaged by a per-page slice, char exhaustion, or the final truncate().
+      const pageLimitHit = declaredPages > pagesToRead;
+      const truncated = pageLimitHit || charLimitHit;
+      const truncationReason = pageLimitHit && charLimitHit
+        ? "maxPagesAndMaxChars"
+        : pageLimitHit
+          ? "maxPages"
+          : charLimitHit
+            ? "maxChars"
+            : null;
+      return {
+        text,
+        pages: pagesToRead,
+        truncated,
+        truncationReason,
+        applied: { maxPages, maxChars },
+        invoiceFields: extractInvoiceFields(joined),
+      };
+    }

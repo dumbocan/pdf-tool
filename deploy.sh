@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# pdf-tool deploy helper.
+#
+# Rollback path (documented contract): to disable the LLM route, unset
+# MINIMAX_API_KEY in .env and redeploy (docker compose up -d --build).
+# POST /extract-with-llm then returns 503 "LLM service is not configured"
+# while POST /extract keeps working. Alternatively, redeploy the previous
+# image. /extract never depends on the LLM route.
+#
+# deploy.sh generates and stores a random AUTH_TOKEN in the ignored local
+# .env only when AUTH_TOKEN is absent; it never prints the token.
+
 if [[ ! -f .env ]]; then
   touch .env
 fi

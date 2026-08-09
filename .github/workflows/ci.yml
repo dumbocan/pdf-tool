@@ -18,3 +18,4 @@ jobs:
       - run: npm ci
       - run: node --test test/*.test.js
       - run: npm audit --omit=dev
+      - run: docker compose config

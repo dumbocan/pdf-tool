@@ -1,0 +1,45 @@
+schema: spec-driven
+
+context: |
+  Project: pdf-tool v0.2 standalone local HTTP service.
+  Stack: Node.js 22, native ESM, pdfjs-dist 4.10.38, Docker Compose.
+  Architecture: HTTP-only boundary; local bounded PDF text extraction, deterministic invoice parsing,
+    Mercadona tabular parsing, and optional MiniMax structured-data fallback.
+  Testing: Node built-in test runner with npm audit in CI; no project linter, type checker, formatter, or coverage gate detected.
+  Planning scope: pdf-tool-v0-2-architecture; implementation is not authorized by initialization.
+
+strict_tdd: true
+
+testing:
+  test_runner: "node --test test/*.test.js"
+  framework: "Node.js built-in test runner"
+  unit: true
+  integration: true
+  e2e: false
+  coverage: false
+  lint: false
+  typecheck: false
+  formatter: false
+  ci_command: "npm ci && node --test test/*.test.js && npm audit --omit=dev"
+
+rules:
+  proposal:
+    - Keep the HTTP-only architecture and explicitly define the v0.2 boundary before considering implementation.
+    - Include unresolved MiniMax response-formatting behavior and a rollback/compatibility plan.
+  specs:
+    - Use Given/When/Then scenarios and RFC 2119 requirement keywords.
+    - Cover invoices, appliance manuals, generic PDFs, parser fallback, and untrusted document content.
+  design:
+    - Preserve bounded resource usage, the trust boundary, and separation between deterministic extraction and LLM fallback.
+    - Document the Python-consumer boundary as an integration concern, not an implicit runtime requirement.
+  tasks:
+    - Group tasks by dependency phase and keep them independently verifiable.
+  apply:
+    tdd: true
+    test_command: "node --test test/*.test.js"
+  verify:
+    test_command: "node --test test/*.test.js"
+    build_command: "docker compose config"
+    coverage_threshold: 0
+  archive:
+    - Do not archive until implementation authorization and verification evidence are explicit.
