@@ -1,6 +1,33 @@
 # pdf-tool
 
-Standalone local HTTP service for bounded PDF extraction. It combines pdfjs text extraction, deterministic invoice fields, a Mercadona-style tabular parser, and an optional MiniMax-M3 structured-data fallback.
+[![Version](https://img.shields.io/badge/version-0.2.0-blue)](https://github.com/dumbocan/pdf-tool/releases)
+[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+[![Tests](https://img.shields.io/badge/tests-83%2F83%20green-brightgreen)](https://github.com/dumbocan/pdf-tool/actions)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+Standalone local HTTP service for **bounded PDF extraction**: pdfjs text extraction, deterministic Spanish invoice fields, a Mercadona-style tabular parser, and an optional MiniMax-M3 structured-data fallback. No OCR, no persistence, no document JavaScript, no Python runtime inside the service.
+
+**Use cases**
+
+- Extract line items from Mercadona invoices (deterministic, parser verdict + reconciliation stats).
+- Extract basic fields from any Spanish invoice (date, number, tax label, totals).
+- Structure manuals and non-tabular documents via an explicit LLM route.
+- Call from any language over HTTP (curl, Node, Python, shell) — it is a standalone tool, not tied to any agent or framework.
+
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [API Contract](#api-contract)
+- [Environment](#environment)
+- [Examples](#examples)
+- [Trust Boundary](#trust-boundary)
+- [Threat Model](#threat-model)
+- [Deploy](#deploy)
+- [Development](#development)
+- [License](#license)
 
 ## Features
 
@@ -8,6 +35,36 @@ Standalone local HTTP service for bounded PDF extraction. It combines pdfjs text
 - Deterministic invoice fields for common Spanish invoice labels.
 - Mercadona tabular line items with a parser verdict and reconciliation statistics.
 - Optional `/extract-with-llm` fallback that sends bounded extracted text, never raw PDF bytes, to MiniMax.
+
+## Requirements
+
+- **Node.js 22+** (native ESM).
+- **npm** for dependency install.
+- **Docker + Docker Compose** (optional — only for the containerized deployment).
+- **MiniMax API key** (optional — only needed for `POST /extract-with-llm`).
+
+## Installation
+
+### From source (local)
+
+```bash
+git clone https://github.com/dumbocan/pdf-tool.git
+cd pdf-tool
+cp .env.example .env    # set AUTH_TOKEN and MINIMAX_API_KEY as needed
+npm install
+```
+
+### From source (Docker)
+
+```bash
+git clone https://github.com/dumbocan/pdf-tool.git
+cd pdf-tool
+cp .env.example .env
+npm install
+docker compose up --build
+```
+
+`docker-compose.prod.yml` is the production overlay: it requires `AUTH_TOKEN` (fail-closed) and makes `MINIMAX_API_KEY` optional so the documented rollback (unset key → 503 on the LLM route, `/extract` unaffected) works in production.
 
 ## Quick Start
 
@@ -271,7 +328,7 @@ The service treats input PDFs, extracted text, invoice fields, parser output, LL
 - LLM output is untrusted and must be independently reviewed before operational use.
 - Deploy behind a private network or TLS-terminating reverse proxy when used beyond localhost. `AUTH_TOKEN` is bearer authentication, not transport encryption.
 
-## VPS Deploy
+## Deploy
 
 1. Install Docker Engine and Compose on the VPS.
 2. Copy this repository to the VPS over a protected channel.
@@ -281,6 +338,21 @@ The service treats input PDFs, extracted text, invoice fields, parser output, LL
 6. Verify `curl http://localhost:3000/healthz` and use the bearer token for extraction.
 
 `deploy.sh` generates and stores a token in the ignored local `.env` only when `AUTH_TOKEN` is absent. It never prints the token.
+
+## Development
+
+```bash
+# run the test suite (83 tests: parser, truncation, error contract, LLM invariants)
+npm test
+
+# security audit
+npm audit --omit=dev
+
+# validate compose files
+docker compose config
+```
+
+All changes follow strict TDD (RED → GREEN → REFACTOR). The SDD artifacts live in [`openspec/changes/pdf-tool-v0-2-architecture/`](openspec/changes/pdf-tool-v0-2-architecture/) (proposal, specs, design, tasks, apply-progress, verify-report, archive-report).
 
 ## License
 
