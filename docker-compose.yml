@@ -3,6 +3,7 @@ services:
     build: .
     ports:
       - "${PORT:-3000}:3000"
+    restart: unless-stopped
     environment:
       PORT: 3000
       MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-16777216}
