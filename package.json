@@ -9,6 +9,8 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "pdfjs-dist": "4.10.38"
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "pdfjs-dist": "4.10.38",
+    "zod": "4.4.3"
   }
 }

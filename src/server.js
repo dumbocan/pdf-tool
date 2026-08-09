@@ -8,6 +8,7 @@
       HARD_MAX_CHARS,
     } from "./extract.js";
     import { parseMercadonaLines } from "./mercadona-parser.js";
+    import { createMcpFacade } from "./mcp-facade.js";
 
 export const VERSION = "0.2.0";
 
@@ -283,6 +284,7 @@ export function createServer({
   llmApiKey = process.env.MINIMAX_API_KEY ?? "",
   llmBaseUrl = process.env.MINIMAX_BASE_URL || DEFAULTS.llmBaseUrl,
   llmModel = process.env.MINIMAX_MODEL || DEFAULTS.llmModel,
+  workspaceRoot,
 } = {}) {
   const server = createHttpServer(async (request, response) => {
     for (const [name, value] of Object.entries(securityHeaders())) response.setHeader(name, value);
@@ -295,6 +297,10 @@ export function createServer({
     }
     if (request.method === "GET" && url.pathname === "/version") {
       jsonResponse(response, 200, { name: "pdf-tool", version: VERSION }, maxResponseBytes);
+      return;
+    }
+    if (url.pathname === "/mcp") {
+      await getMcpFacade().handleMcpRequest(request, response);
       return;
     }
     if (request.method !== "POST" || !["/extract", "/extract-with-llm"].includes(url.pathname)) {
@@ -363,12 +369,25 @@ export function createServer({
       const message = resolvedStatus === 413
         ? "request body exceeds the size limit"
         : error?.publicMessage || "invalid PDF extraction request";
-      errorResponse(response, resolvedStatus, message, maxResponseBytes);
+        errorResponse(response, resolvedStatus, message, maxResponseBytes);
+      }
+    });
+    server.port = port;
+    // The MCP facade calls the REST endpoints over loopback, so it needs the
+    // effective bound port (ephemeral when tests listen on port 0). Lazily
+    // created on the first /mcp request, once the server is listening.
+    let mcpFacade = null;
+    function getMcpFacade() {
+      if (!mcpFacade) {
+        const address = server.address();
+        const effectivePort =
+          address && typeof address === "object" && address.port ? address.port : port;
+        mcpFacade = createMcpFacade({ port: effectivePort, authToken, workspaceRoot });
+      }
+      return mcpFacade;
     }
-  });
-  server.port = port;
-  return server;
-}
+    return server;
+  }
 
 export function startServer(options = {}) {
   const numberFromEnv = (name, fallback) => {
