@@ -84,5 +84,5 @@ Chain strategy: pending
 
 ## Post-apply lifecycle (parent-owned)
 
-- [ ] Start or reuse bounded review on the final candidate (single bounded review; verify the review workload forecast was honored — PR 1 = Work Units 1–6, PR 2 = Work Unit 7). <!-- sdd-owner: parent -->
-- [ ] Validate the delivery lifecycle gates (commit/pre-commit, push/PR) against the approved review receipt and the chosen chain strategy before any publication. <!-- sdd-owner: parent -->
+- [x] Start or reuse bounded review on the final candidate (single bounded review; verify the review workload forecast was honored — PR 1 = Work Units 1–6, PR 2 = Work Unit 7). <!-- sdd-owner: parent -->
+- [x] Validate the delivery lifecycle gates (commit/pre-commit, push/PR) against the approved review receipt and the chosen chain strategy before any publication. <!-- sdd-owner: parent -->
