@@ -1,0 +1,14 @@
+{
+  "name": "pdf-tool",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone local HTTP service for bounded PDF text extraction.",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "pdfjs-dist": "4.10.38"
+  }
+}

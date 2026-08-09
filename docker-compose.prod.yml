@@ -1,0 +1,5 @@
+services:
+  pdf-tool:
+    restart: unless-stopped
+    environment:
+      AUTH_TOKEN: ${AUTH_TOKEN:?AUTH_TOKEN must be set for production}
