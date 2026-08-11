@@ -36,6 +36,19 @@ Standalone local HTTP service for **bounded PDF extraction**: pdfjs text extract
 - Mercadona tabular line items with a parser verdict and reconciliation statistics.
 - Optional `/extract-with-llm` fallback that sends bounded extracted text, never raw PDF bytes, to MiniMax.
 
+## Vendor Invoice Parsers
+
+`extract_pdf_from_path` / `extract_pdf_from_base64` auto-detect these businesses and fill structured `invoiceFields` deterministically (fast, free, no LLM):
+
+| Vendor | Marker | Extracted fields |
+|---|---|---|
+| Mercadona | `MERCADONA S.A.` | number, date, IGIC totals, line items (tabular) |
+| MILLER / Lencar Canarias | `LENCAR CANARIAS`, `POL.IN. MILLER` | number (`Refª.`), date, IGIC totals |
+| Empark (Dársena Deportiva) | `EMPARK APARCAMIENTOS` | number, ISO date, IGIC totals |
+| Acastimar | `ACASTIMAR, S.L.` | number, date, neto/BaseIVA totals |
+
+When no vendor matches or fields stay partial (unknown or foreign layouts), use `extract_pdf_with_llm` (MiniMax-M3) for generic structured extraction — requires `MINIMAX_API_KEY`. The deterministic endpoint never auto-calls the LLM: the fallback is explicit by design (evidence-gated, cost-controlled).
+
 ## Requirements
 
 - **Node.js 22+** (native ESM).

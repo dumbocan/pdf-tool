@@ -2,6 +2,8 @@
 // persists anything to disk. Returns sanitized text plus a trust boundary so the
 // caller can wrap the result for chat summarization.
 
+import { parseVendorInvoice } from "./vendor-parsers.js";
+
 export const MAX_PDF_BYTES = 12 * 1024 * 1024; // 12 MiB raw PDF cap
 export const MIN_PDF_BYTES = 8; // smallest reasonable %PDF-1.x header
 const PDF_MAGIC = Buffer.from("%PDF-", "utf8");
@@ -244,6 +246,40 @@ export function extractInvoiceFields(text) {
   };
 }
 
+// Merge vendor-specific extraction into the generic fields. Vendor matches
+// override the generic base field-by-field and extend the matched list, so a
+// MILLER/Empark/Acastimar layout that the generic regex misses (e.g. "Refª."
+// numbers or column-aligned totals) still yields structured invoiceFields.
+export function enrichInvoiceFields(text) {
+  const base = extractInvoiceFields(text);
+  const vendorResult = parseVendorInvoice(text);
+  if (!vendorResult) return base;
+  const matched = [...base.matched];
+  const totals = { ...base.totals };
+  const vendorFields = vendorResult.fields;
+  const merged = { ...base, vendor: vendorResult.vendor, totals };
+  if (vendorFields.invoiceNumber != null) {
+    merged.invoiceNumber = vendorFields.invoiceNumber;
+    if (!matched.includes("invoiceNumber")) matched.push("invoiceNumber");
+  }
+  if (vendorFields.invoiceDate != null) {
+    merged.invoiceDate = vendorFields.invoiceDate;
+    if (!matched.includes("invoiceDate")) matched.push("invoiceDate");
+  }
+  if (vendorFields.taxLabel != null) {
+    merged.taxLabel = vendorFields.taxLabel;
+    if (!matched.includes("taxLabel")) matched.push("taxLabel");
+  }
+  for (const key of ["subtotal", "tax", "total"]) {
+    if (vendorFields.totals?.[key] != null) {
+      totals[key] = vendorFields.totals[key];
+      if (!matched.includes(key)) matched.push(key);
+    }
+  }
+  merged.matched = matched;
+  return merged;
+}
+
 export function validatePdfBuffer(buffer) {
   if (!Buffer.isBuffer(buffer)) {
     throw new PdfExtractionError("PDF payload must be a buffer", "pdf_invalid_type");
@@ -409,6 +445,6 @@ export async function extractTextFromPdf(buffer, options = {}) {
         truncated,
         truncationReason,
         applied: { maxPages, maxChars },
-        invoiceFields: extractInvoiceFields(joined),
+        invoiceFields: enrichInvoiceFields(joined),
       };
     }
