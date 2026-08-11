@@ -9,6 +9,7 @@ import {
   _internal,
 } from "../src/vendor-parsers.js";
 import { enrichInvoiceFields } from "../src/extract.js";
+import { parseVendorLineItems } from "../src/vendor-parsers.js";
 
 // Real invoice texts extracted from the production IMAP mailbox (Hostinger)
 // via pdf-tool v0.2. These are untrusted real-world fixtures: if a vendor
@@ -110,6 +111,54 @@ test("date normalization maps es-ES and ISO formats to ISO", () => {
   assert.equal(toIsoDate(null), null);
 });
 
+test("MILLER line items extract qty, unit price, amount and IGIC rate per module", () => {
+  const rows = parseVendorLineItems(fixtures.miller, "miller");
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].units, "1");
+  assert.equal(rows[0].unit_price_eur, "70.47");
+  assert.equal(rows[0].amount_eur, "70.47");
+  assert.equal(rows[0].tax_rate, "7.00");
+  assert.match(rows[0].description, /M[OÓ]DULO/);
+  assert.equal(rows[1].unit_price_eur, "61.12");
+});
+
+test("EMPARK line items extract the single monthly parking row", () => {
+  const rows = parseVendorLineItems(fixtures.empark, "empark");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].units, "1");
+  assert.equal(rows[0].unit_price_eur, "12.00");
+  assert.equal(rows[0].amount_eur, "12.00");
+  assert.equal(rows[0].tax_rate, "7.00");
+  assert.match(rows[0].description, /Abono 24 Horas/);
+});
+
+test("ACASTIMAR line items extract list/net price, discount, reference and qty", () => {
+  const rows = parseVendorLineItems(fixtures.acastimar, "acastimar");
+  assert.ok(rows.length >= 4, "expected at least 4 rows");
+  const first = rows[0];
+  assert.match(first.description, /EVAPORATOR|FRIGOMATIC/i);
+  assert.equal(first.list_price_eur, "865.00");
+  assert.equal(first.unit_price_eur, "562.25");
+  assert.equal(first.discount_pct, "35.00");
+  assert.equal(first.amount_eur, "562.25");
+  assert.equal(first.units, "1.00");
+  assert.ok(first.reference, "reference should be present");
+});
+
+test("parseVendorLineItems returns [] for unknown vendor or empty text", () => {
+  assert.deepEqual(parseVendorLineItems("texto sin vendor", "nosuchvendor"), []);
+  assert.deepEqual(parseVendorLineItems("", "miller"), []);
+});
+
 test("vendor inventory stays in sync with the marker table", () => {
-  assert.deepEqual(VENDOR_NAMES, ["mercadona", "miller", "empark", "acastimar"]);
+  assert.deepEqual(VENDOR_NAMES, ["mercadona", "miller", "empark", "acastimar", "doctoragua"]);
+});
+
+
+test("doctoragua (DOCTOR AGUA S.L.) auto-generated parser", () => {
+  const fixture = JSON.parse(readFileSync(fileURLToPath(new URL("./fixtures/doctoragua.json", import.meta.url)), "utf8"));
+  const result = parseVendorInvoice(fixture.text);
+  assert.equal(result.vendor, "doctoragua");
+  assert.ok(result.fields.invoiceNumber, "invoiceNumber should be extracted");
+  assert.ok(result.fields.invoiceDate, "invoiceDate should be extracted");
 });

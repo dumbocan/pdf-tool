@@ -8,6 +8,7 @@
       HARD_MAX_CHARS,
     } from "./extract.js";
     import { parseMercadonaLines } from "./mercadona-parser.js";
+    import { detectVendor, parseVendorLineItems } from "./vendor-parsers.js";
     import { createMcpFacade } from "./mcp-facade.js";
 
 export const VERSION = "0.2.0";
@@ -143,21 +144,30 @@ function hasValidToken(request, expected) {
     function normalizeResult(buffer, extracted) {
       const text = typeof extracted?.text === "string" ? extracted.text : "";
       const parsed = parseMercadonaLines(text);
-      const parser = parsed.stats.lineItemsDetected >= 3 ? "mercadona-tabular" : "plain-text";
+      const vendor = detectVendor(text);
+      const vendorLineItems = vendor ? parseVendorLineItems(text, vendor) : [];
+      const lineItems = parsed.lineItems.length >= 3 ? parsed.lineItems : vendorLineItems;
+      const parser = vendor
+        ? `${vendor}-tabular`
+        : parsed.stats.lineItemsDetected >= 3
+          ? "mercadona-tabular"
+          : "plain-text";
       const invoiceFields = extracted?.invoiceFields ?? null;
       const truncation = buildTruncation(extracted);
-      const source = parser === "mercadona-tabular"
-        ? "mercadona-tabular"
-        : invoiceFields && Array.isArray(invoiceFields.matched) && invoiceFields.matched.length > 0
-          ? "invoice-fields"
-          : "plain-text";
+      const source = vendor
+        ? `${vendor}-tabular`
+        : parser === "mercadona-tabular"
+          ? "mercadona-tabular"
+          : invoiceFields && Array.isArray(invoiceFields.matched) && invoiceFields.matched.length > 0
+        ? "invoice-fields"
+        : "plain-text";
       return {
         text,
         pages: Number.isInteger(extracted?.pages) ? extracted.pages : 0,
         truncated: truncation !== null,
         ...(truncation ? { truncation } : {}),
         invoiceFields,
-        lineItems: parsed.lineItems,
+        lineItems,
         parser,
         parserStats: parsed.stats,
         source,
