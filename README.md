@@ -24,6 +24,12 @@ iex (Invoke-WebRequest https://raw.githubusercontent.com/dumbocan/pdf-tool/main/
 curl -fsSL https://raw.githubusercontent.com/dumbocan/pdf-tool/main/install.sh | bash
 ```
 
+**¿No tenés `curl`?** Usá `wget` (o instalá curl con `sudo apt install curl`):
+
+```bash
+wget -qO- https://raw.githubusercontent.com/dumbocan/pdf-tool/main/install.sh | bash
+```
+
 **O con Docker** (funciona en los tres):
 ```bash
 docker run -v /ruta/a/tus/facturas:/facturas pdf-tool node bin/pdf-tool.mjs facturas /facturas --ocr
