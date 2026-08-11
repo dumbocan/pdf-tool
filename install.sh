@@ -85,10 +85,15 @@ echo "➜ pnpm: $(pnpm --version 2>/dev/null || echo 'no disponible')"
 if ! command -v tesseract >/dev/null 2>&1; then
   echo ""
   echo "➜ No encontré tesseract (para leer facturas escaneadas). Instalándolo..."
-  if command -v apt-get >/dev/null 2>&1; then
-    echo "   (se pedirá tu contraseña)"
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-spa poppler-utils
+      if command -v apt-get >/dev/null 2>&1; then
+        echo "   (se pedirá tu contraseña)"
+        sudo apt-get update -qq
+        # Tolerante: si apt falla (p. ej. otro paquete roto del sistema),
+        # seguimos sin OCR en vez de abortar toda la instalación.
+        sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-spa poppler-utils || {
+          echo "⚠ apt no pudo instalar tesseract (puede haber otro paquete roto en el sistema)."
+          echo "  Las facturas escaneadas no se leerán, pero las digitales sí."
+        }
   elif command -v brew >/dev/null 2>&1; then
     brew install tesseract tesseract-lang poppler >/dev/null
   else
