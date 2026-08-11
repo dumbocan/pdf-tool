@@ -381,11 +381,19 @@ test("extract requires bearer auth when configured and returns all fields", asyn
 
     test("route contract: unknown path and wrong method return 404 with an empty body", async () => {
       await withServer({ authToken: "secret" }, async (baseUrl) => {
-        const unknown = await fetch(`${baseUrl}/nope`, { method: "POST" });
+        // Unauthenticated requests to protected routes are rejected with 401
+        // (route info is not leaked before auth).
+        const unauthorized = await fetch(`${baseUrl}/nope`, { method: "POST" });
+        assert.equal(unauthorized.status, 401);
+        const wrongMethodUnauthorized = await fetch(`${baseUrl}/extract`, { method: "GET" });
+        assert.equal(wrongMethodUnauthorized.status, 401);
+
+        // With the token, unknown paths still get 404.
+        const headers = { authorization: "Bearer secret" };
+        const unknown = await fetch(`${baseUrl}/nope`, { method: "POST", headers });
         assert.equal(unknown.status, 404);
         assert.equal(await unknown.text(), "");
-
-        const wrongMethod = await fetch(`${baseUrl}/extract`, { method: "GET" });
+        const wrongMethod = await fetch(`${baseUrl}/extract`, { method: "GET", headers });
         assert.equal(wrongMethod.status, 404);
         assert.equal(await wrongMethod.text(), "");
       });

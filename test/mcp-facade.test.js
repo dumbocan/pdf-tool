@@ -22,9 +22,10 @@ async function withServer(options, fn) {
 // Minimal Streamable HTTP MCP client for the facade under test. The SDK (as in
 // v1) responds to POST requests with SSE by default, so the client parses both
 // JSON and text/event-stream bodies like a real MCP client does.
-function mcpClient(baseUrl) {
+function mcpClient(baseUrl, token) {
   let sessionId = null;
   let nextId = 1;
+  const authHeader = token ? { authorization: `Bearer ${token}` } : {};
 
   async function readResponseBody(response) {
     const contentType = response.headers.get("content-type") ?? "";
@@ -50,6 +51,7 @@ function mcpClient(baseUrl) {
     const headers = {
       "content-type": "application/json",
       accept: "application/json, text/event-stream",
+      ...authHeader,
     };
     if (sessionId) headers["mcp-session-id"] = sessionId;
     const response = await fetch(`${baseUrl}/mcp`, { method: "POST", headers, body: JSON.stringify(body) });
@@ -260,7 +262,7 @@ test("invalid base64 input maps to the exact REST error message", async () => {
 
 test("facade authenticates to the REST endpoints when AUTH_TOKEN is configured", async () => {
   await withServer({ authToken: "secret", extract: EXTRACT_STUB }, async (baseUrl) => {
-    const client = mcpClient(baseUrl);
+    const client = mcpClient(baseUrl, "secret");
     await client.connect();
     const result = await client.send("tools/call", {
       name: "extract_pdf_from_base64",

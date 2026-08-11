@@ -199,18 +199,25 @@ export function parseVendorInvoice(text) {
   return parser(typeof text === "string" ? text : "");
 }
 
+const MAX_LINE_REGION = 60_000;
+
 function boundedRegion(text, start, end) {
   const from = start ? text.indexOf(start) : 0;
-  if (from < 0) return text;
+  if (from < 0) return text.slice(0, MAX_LINE_REGION);
   const to = end ? text.indexOf(end, from) : text.length;
-  return to >= 0 ? text.slice(from, to) : text.slice(from);
+  const region = to >= 0 ? text.slice(from, to) : text.slice(from);
+  // Cap so a missing end marker cannot turn the lazy regexes into a
+  // super-linear CPU burn on crafted input.
+  return region.slice(0, MAX_LINE_REGION);
 }
 
 // Column headers that can leak into the first line-item description when the
 // bounded region starts at the header row ("Refª. Descripción Uds. Precio ud...").
 const LINE_HEADER_TOKENS = [
   "Refª", "Descripción", "Uds", "Precio ud", "Dto", "Importe", "IGIC",
-  "Cant", "Código", "Precio Unit", "Precio Unitario", "Total", "Uni", "Artículo",
+  "Cant", "Código", "Precio Unit", "Precio Unitario", "Precio Neto", "Total",
+  "Uni", "Artículo", "Importe(EUR)", "Albarán", "Su Pedido",
+  "Detalle de Facturación", "Importes em EUR", "Base Imponible", "IMPUESTO", "TOTAL",
 ];
 
 function cleanLineDescription(value) {
@@ -248,7 +255,7 @@ const VENDOR_LINE_PARSERS = {
   miller(text) {
     const region = boundedRegion(text, "Refª", "Recibo Resumen");
     return [...region.matchAll(
-      /([\s\S]*?M[OÓ]DULO\s+Nº\s*:\s*[A-Z0-9]+)\s+(\d+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/g,
+      /([\s\S]{1,250}?M[OÓ]DULO\s+Nº\s*:\s*[A-Z0-9]+)\s+(\d+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/g,
     )].map((m) => ({
       description: cleanLineDescription(m[1]),
       units: parseAmount(m[2]),
@@ -260,7 +267,7 @@ const VENDOR_LINE_PARSERS = {
   empark(text) {
     const region = boundedRegion(text, "Detalle de Facturación", "Detalle del IGIC");
     return [...region.matchAll(
-      /([\s\S]*?)(\d+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s*%/g,
+      /([\s\S]{1,250}?)(\d+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s*%/g,
     )].map((m) => ({
       description: cleanLineDescription(m[1]),
       units: parseAmount(m[2]),
@@ -272,7 +279,7 @@ const VENDOR_LINE_PARSERS = {
   acastimar(text) {
     const region = boundedRegion(text, "Precio Unitario", "Importe neto");
     return [...region.matchAll(
-      /([\s\S]*?)(\d+,\d{2})\s+(\d+,\d{2})\s+(\d+,\d{2})\s+([A-Z0-9.]+)\s+(\d+,\d{2})\s+(\d+,\d{2})/g,
+      /([\s\S]{1,250}?)(\d+,\d{2})\s+(\d+,\d{2})\s+(\d+,\d{2})\s+([A-Z0-9.]+)\s+(\d+,\d{2})\s+(\d+,\d{2})/g,
     )].map((m) => ({
       description: cleanLineDescription(m[1]),
       list_price_eur: parseAmount(m[2]),

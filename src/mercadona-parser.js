@@ -15,7 +15,7 @@ const TAX = String.raw`[A-Z][A-Z0-9 ()\.%]{0,8}`;
 // base, tax, tax_amount, total. We restrict desc to non-newline whitespace
 // so the regex cannot bridge across unrelated rows.
 const MERCADONA_ITEM_RE = new RegExp(
-  String.raw`(?<desc>[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ0-9 \t\.\-/():,°ª%&'+]*?)[ \t]+` +
+  String.raw`(?<desc>[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ0-9 \t\.\-/():,°ª%&'+]{0,120}?)[ \t]+` +
   String.raw`(?<units>[0-9]+(?:[.,][0-9]+)?)[ \t]+` +
   String.raw`(?<pu>${NUM})[ \t]+` +
   String.raw`(?<bi>${NUM})[ \t]+` +
@@ -111,7 +111,10 @@ function extractItemRegion(rawText) {
     const idx = rawText.indexOf(marker, start);
     if (idx > 0 && idx < end) end = idx;
   }
-  return rawText.slice(start, end);
+  // Cap the scanned region so a crafted PDF with no totals marker cannot turn
+  // the regex into a super-linear CPU burn (bounded worst case).
+  const MAX_REGION = 60_000;
+  return rawText.slice(start, Math.min(end, start + MAX_REGION));
 }
 
 export function parseMercadonaLines(rawText) {

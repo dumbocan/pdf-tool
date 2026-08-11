@@ -3,14 +3,18 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Standalone local HTTP service for bounded PDF text extraction.",
+  "description": "Standalone PDF invoice extraction: folder scanning, per-vendor parsers, OCR for scans.",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "scan": "node bin/pdf-tool.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "pdfjs-dist": "4.10.38",
     "zod": "4.4.3"
+  },
+  "bin": {
+    "pdf-tool": "bin/pdf-tool.mjs"
   }
 }

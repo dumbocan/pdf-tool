@@ -138,8 +138,17 @@ if (detected && nameFlag && detected !== slug) {
   process.exit(2);
 }
 
+function safeString(value) {
+  // Strip control chars/newlines so an attacker-controlled vendorDisplay cannot
+  // break out of a generated comment or string literal into arbitrary JS.
+  return String(value ?? "").replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function escapeRe(s) {
-  return String(s ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Escape regex metacharacters PLUS the "/" literal delimiter and control
+  // characters, so an LLM-controlled vendor marker cannot break the generated
+  // /.../i literal (slash) or inject newlines/statements.
+  return safeString(s).replace(/[.*+?^${}()|[\]\\/\u0000-\u001f\u007f]/g, "\\$&");
 }
 function parseAmountLocal(value) {
   if (value == null) return null;
@@ -200,7 +209,7 @@ function extractTotals(text, { subtotalRe, taxRe, totalRe } = {}) {
 }
 
 // 4. Template codegen
-const comment = `// --- ${patterns.vendorDisplay ?? slug} (auto-generated from ${path.basename(pdfPath)}) ---`;
+const comment = `// --- ${safeString(patterns.vendorDisplay) || safeString(slug)} (auto-generated from ${safeString(path.basename(pdfPath))}) ---`;
 const totalsConsts = buildTotalsConsts(slug, patterns.totals);
 const consts = `const ${slug.toUpperCase()}_NUMBER_RE = ${buildNumberRe(patterns.number)};
 const ${slug.toUpperCase()}_DATE_RE = ${buildDateRe(patterns.date)};
@@ -293,7 +302,7 @@ testSrc = testSrc.replace(
 await writeFile(TEST_PATH, testSrc);
 const test = `
 
-test("${slug} (${patterns.vendorDisplay ?? slug}) auto-generated parser", () => {
+test("${slug} (${safeString(patterns.vendorDisplay) || safeString(slug)}) auto-generated parser", () => {
   const fixture = JSON.parse(readFileSync(fileURLToPath(new URL("./fixtures/${slug}.json", import.meta.url)), "utf8"));
   const result = parseVendorInvoice(fixture.text);
   assert.equal(result.vendor, "${slug}");
