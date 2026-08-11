@@ -11,6 +11,7 @@
     import { detectVendor, parseVendorLineItems } from "./vendor-parsers.js";
     import { readFileSync } from "node:fs";
 import { envWithFile } from "./env.js";
+import { providerById } from "./providers.js";
     import { createMcpFacade } from "./mcp-facade.js";
 
 const VERSION = (() => {
@@ -230,44 +231,59 @@ function parseLlmStructuredResponse(message) {
   return parseStructuredObject(toolCall.function.arguments.trim());
 }
 
-async function callLlm({ apiKey, baseUrl, model, systemInstruction, userContent, maxTokens, fetchImpl }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
-  try {
-    const response = await fetchImpl(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemInstruction },
-          { role: "user", content: userContent },
-        ],
-        thinking: { type: "disabled" },
-        max_tokens: maxTokens,
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw requestError("LLM upstream request failed", 502);
-    const payload = await response.json();
-    const message = payload?.choices?.[0]?.message;
-    const content = typeof message?.content === "string"
-      ? message.content.trim()
-      : "";
-    const structured = parseLlmStructuredResponse(message);
-    if (!structured) throw requestError("LLM upstream response invalid", 502);
-    return { content, structured, usage: payload?.usage ?? {} };
-  } catch (error) {
-    if (error?.status === 502) throw error;
-    if (error?.name === "AbortError") throw requestError("LLM upstream request timed out", 504);
-    throw requestError("LLM upstream request failed", 502);
-  } finally {
-    clearTimeout(timer);
-  }
-}
+    async function callLlm({ apiKey, baseUrl, model, provider = "", systemInstruction, userContent, maxTokens, fetchImpl }) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+      const anthropic = providerById(provider)?.anthropic === true;
+      try {
+        const response = await fetchImpl(`${baseUrl}${anthropic ? "/messages" : "/chat/completions"}`, {
+          method: "POST",
+          headers: anthropic
+            ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" }
+            : { Authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+          body: JSON.stringify(
+            anthropic
+              ? {
+                  model,
+                  max_tokens: maxTokens,
+                  system: systemInstruction,
+                  messages: [{ role: "user", content: userContent }],
+                }
+              : {
+                  model,
+                  messages: [
+                    { role: "system", content: systemInstruction },
+                    { role: "user", content: userContent },
+                  ],
+                  thinking: { type: "disabled" },
+                  max_tokens: maxTokens,
+                },
+          ),
+          signal: controller.signal,
+        });
+        if (!response.ok) throw requestError("LLM upstream request failed", 502);
+        const payload = await response.json();
+        const message = anthropic
+          ? {
+              content: Array.isArray(payload?.content)
+                ? payload.content.map((b) => b.text ?? "").join("").trim()
+                : "",
+            }
+          : payload?.choices?.[0]?.message;
+        const content = typeof message?.content === "string"
+          ? message.content.trim()
+          : "";
+        const structured = parseLlmStructuredResponse(message);
+        if (!structured) throw requestError("LLM upstream response invalid", 502);
+        return { content, structured, usage: payload?.usage ?? {} };
+      } catch (error) {
+        if (error?.status === 502) throw error;
+        if (error?.name === "AbortError") throw requestError("LLM upstream request timed out", 504);
+        throw requestError("LLM upstream request failed", 502);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
 
 function validateInput(input, { includeLlmFields = false } = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -302,6 +318,7 @@ export function createServer({
   llmApiKey = (envWithFile().LLM_API_KEY ?? envWithFile().MINIMAX_API_KEY ?? "") || "",
   llmBaseUrl = (envWithFile().LLM_BASE_URL ?? envWithFile().MINIMAX_BASE_URL) || DEFAULTS.llmBaseUrl,
   llmModel = (envWithFile().LLM_MODEL ?? envWithFile().MINIMAX_MODEL) || DEFAULTS.llmModel,
+  llmProvider = envWithFile().PROVIDER ?? "",
   workspaceRoot,
 } = {}) {
   const server = createHttpServer(async (request, response) => {
@@ -373,6 +390,7 @@ export function createServer({
         apiKey: llmApiKey,
         baseUrl: llmBaseUrl,
         model: llmModel,
+        provider: llmProvider,
         systemInstruction: LLM_SYSTEM_INSTRUCTION,
         userContent,
         maxTokens: input.maxTokens ?? 8000,

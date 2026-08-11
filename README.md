@@ -62,19 +62,27 @@ pdf-tool facturas
 
     ### Configurá tu IA (una vez, con el instalador o con `pdf-tool config`)
 
-    Durante la instalación se te ofrece configurar el **proveedor de IA**. Elegís de un menú (MiniMax, OpenAI, OpenRouter, DeepSeek, Groq, o local con Ollama/LM Studio), pegás tu clave y listo — el instalador pone solos la dirección y el modelo correctos:
+    Durante la instalación se te ofrece configurar el **proveedor de IA**. Elegís de un menú con **18 proveedores** — americanos (OpenAI, Anthropic, Google, Groq, xAI...), chinos (MiniMax, DeepSeek, Qwen, Kimi, GLM...), europeos (Mistral, Aleph Alpha) y locales (Ollama, LM Studio, sin internet) — pegás tu clave y listo. El instalador pone solos la dirección y el modelo correctos, y después te muestra los modelos para elegir con números:
 
     ```
     ➜ Elegí tu proveedor de IA:
-      [1] MiniMax — Rápido y barato, muy bueno en español
-      [2] OpenAI — GPT, el clásico
-      [3] OpenRouter — Una sola clave para muchos modelos
+      [1] OpenAI — GPT, el clásico
+      [2] Anthropic — Claude, muy bueno escribiendo
+      [3] Google (Gemini) — gratis para probar
+      [4] MiniMax — rápido y barato, muy bueno en español
+      [5] DeepSeek — muy barato
       ...
-      [6] Local (Ollama) — Sin internet ni clave
-    Número (o Enter = salir sin IA): 1
-    ➜ Pegá tu clave de MiniMax (Enter = dejar la que ya tenés): sk-...
-    ➜ Modelo (Enter = MiniMax-M3):
-    ➜ Dirección del servicio (Enter = https://api.minimax.io/v1):
+    Número (o Enter = salir sin IA): 2
+
+    ➜ Pegá tu clave de Anthropic (Enter = dejar la que ya tenés): sk-ant-...
+
+    ➜ Elegí el modelo de Anthropic:
+      [1] claude-sonnet-4-5
+      [2] claude-opus-4-1
+      [3] Otro (escribo el nombre)
+    Número (Enter = claude-sonnet-4-5): 1
+
+    ➜ Dirección del servicio (Enter = https://api.anthropic.com):
     ✅ Configuración guardada.
     ```
 
