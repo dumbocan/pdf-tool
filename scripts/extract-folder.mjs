@@ -192,6 +192,13 @@ for (const file of files) {
         li.amount_eur ?? li.amount ?? "",
       ].join(" :: "),
     ).join(" ; "),
+    articles: lineItems.map((li) => ({
+      description: li.description ?? "",
+      units: li.units ?? li.quantity ?? "",
+      unit_price: li.unit_price_eur ?? li.unitPrice ?? "",
+      amount: li.amount_eur ?? li.amount ?? "",
+      tax_rate: li.tax_rate ?? li.taxRate ?? "",
+    })),
     textChars: text.length,
   });
 }
@@ -201,10 +208,15 @@ if (wantJson) {
   if (outPath) await writeFile(outPath, out);
   else process.stdout.write(out);
 } else {
-  const header = ["file", "vendor", "invoiceNumber", "invoiceDate", "subtotal", "tax", "total", "taxLabel", "lineItems"].join(",");
-  const lines = rows.map((r) =>
-    [r.file, r.vendor, r.invoiceNumber, r.invoiceDate, r.subtotal, r.tax, r.total, r.taxLabel, r.lineItems].map(csvCell).join(","),
-  );
+  const header = ["file", "vendor", "invoiceNumber", "invoiceDate", "subtotal", "tax", "total", "taxLabel", "article", "units", "unit_price", "amount", "tax_rate"].join(",");
+  const lines = [];
+  for (const r of rows) {
+    const ctx = [r.file, r.vendor, r.invoiceNumber, r.invoiceDate, r.subtotal, r.tax, r.total, r.taxLabel];
+    const articles = Array.isArray(r.articles) && r.articles.length ? r.articles : [null];
+    for (const a of articles) {
+      lines.push([...ctx, a ? a.description : "", a ? a.units : "", a ? a.unit_price : "", a ? a.amount : "", a ? a.tax_rate : ""].map(csvCell).join(","));
+    }
+  }
   const out = header + "\n" + lines.join("\n") + "\n";
   if (outPath) await writeFile(outPath, out);
   else process.stdout.write(out);

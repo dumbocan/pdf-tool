@@ -117,6 +117,14 @@ export async function scanFolder(folder, { useOcr = false, useLlm = false, onPro
           [li.description ?? "", li.units ?? li.quantity ?? "", li.unit_price_eur ?? li.unitPrice ?? "", li.amount_eur ?? li.amount ?? ""].join(" :: "),
         )
         .join(" ; "),
+      // Structured per-article rows for the DB-ingestion script.
+      articles: lineItems.map((li) => ({
+        description: li.description ?? "",
+        units: li.units ?? li.quantity ?? "",
+        unit_price: li.unit_price_eur ?? li.unitPrice ?? "",
+        amount: li.amount_eur ?? li.amount ?? "",
+        tax_rate: li.tax_rate ?? li.taxRate ?? "",
+      })),
       textChars: text.length,
     });
   }

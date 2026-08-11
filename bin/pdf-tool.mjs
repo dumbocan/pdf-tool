@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { scanFolder, listPdfFiles } from "../src/folder-scan.js";
+import { t } from "../src/i18n.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const VERSION = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version || "0.0.0";
@@ -27,12 +28,26 @@ function csvCell(value) {
 }
 
 function csvFromRows(rows) {
-  const header = ["archivo", "proveedor", "numero_factura", "fecha", "subtotal", "impuesto", "total", "impuesto_label", "articulos"].join(",");
-  const lines = rows.map((r) =>
-    [r.file, r.vendor, r.invoiceNumber, r.invoiceDate, r.subtotal, r.tax, r.total, r.taxLabel, r.lineItems]
-      .map(csvCell)
-      .join(","),
-  );
+  // DB-ready format: ONE row per article (line item), with the invoice context
+  // repeated. Invoices without parsed articles still get one row (empty article
+  // columns) so nothing is lost. A script can load this directly into a DB.
+  const header = [
+    "archivo", "proveedor", "numero_factura", "fecha",
+    "subtotal", "impuesto", "total", "impuesto_label",
+    "articulo", "cantidad", "precio_unitario", "importe_articulo", "impuesto_articulo",
+  ].join(",");
+  const lines = [];
+  for (const r of rows) {
+    const ctx = [r.file, r.vendor, r.invoiceNumber, r.invoiceDate, r.subtotal, r.tax, r.total, r.taxLabel];
+    const articles = Array.isArray(r.articles) && r.articles.length ? r.articles : [null];
+    for (const a of articles) {
+      lines.push(
+        [...ctx, a ? a.description : "", a ? a.units : "", a ? a.unit_price : "", a ? a.amount : "", a ? a.tax_rate : ""]
+          .map(csvCell)
+          .join(","),
+      );
+    }
+  }
   return header + "\n" + lines.join("\n") + "\n";
 }
 
@@ -44,13 +59,13 @@ function friendlySummary(rows, folder) {
   const vendors = [...new Set(rows.map((r) => r.vendor).filter(Boolean))];
   const lines = [
     "",
-    "✅ Listo. Resumen de la carpeta: " + folder,
+    t("done_summary", { folder }),
     "",
-    `  Facturas procesadas: ${total}`,
-    `  Con datos extraídos: ${ok}`,
-    scanned > 0 ? `  Sin texto (escaneadas?): ${scanned} — usá --ocr la próxima vez` : "",
-    errores > 0 ? `  Con errores: ${errores}` : "",
-    vendors.length ? `  Proveedores detectados: ${vendors.join(", ")}` : "",
+    t("invoices_processed", { n: total }),
+    t("with_data", { n: ok }),
+    scanned > 0 ? t("scanned_hint", { n: scanned }) : "",
+    errores > 0 ? t("with_errors", { n: errores }) : "",
+    vendors.length ? t("vendors_detected", { v: vendors.join(", ") }) : "",
     "",
   ];
   return lines.filter(Boolean).join("\n");
@@ -97,21 +112,21 @@ async function runConfig(args) {
   }
 
   console.log("");
-  console.log("Configuración de pdf-tool");
-  console.log("---------------------------");
+  console.log(t("config_title"));
+  console.log(t("config_sep"));
   const current = readEnv();
-  const wantAi = await prompt("¿Querés que las facturas desconocidas se lean con IA? (s/N): ");
+  const wantAi = await prompt(t("ask_ai"));
   if (!/^s/i.test(wantAi)) {
-    console.log("OK, sin IA. Las facturas de proveedores conocidos se leen igual.");
+    console.log(t("no_ai"));
     return;
   }
-  const key = await prompt("Pegá tu clave de MiniMax (https://platform.minimax.io): ");
+  const key = await prompt(t("ask_key"));
   if (!key) {
-    console.log("Sin clave — lo dejamos sin IA por ahora. Podés volver con: pdf-tool config");
+    console.log(t("no_key"));
     return;
   }
-  const model = await prompt(`Modelo (Enter = ${current.MINIMAX_MODEL || "MiniMax-M3"}): `);
-  const baseUrl = await prompt(`Dirección del servicio (Enter = ${current.MINIMAX_BASE_URL || "https://api.minimax.io/v1"}): `);
+  const model = await prompt(t("ask_model", { model: current.MINIMAX_MODEL || "MiniMax-M3" }));
+  const baseUrl = await prompt(t("ask_base", { url: current.MINIMAX_BASE_URL || "https://api.minimax.io/v1" }));
   const merged = {
     ...current,
     MINIMAX_API_KEY: key,
@@ -121,18 +136,16 @@ async function runConfig(args) {
   const body = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
   await writeFile(ENV_PATH, body, { mode: 0o600 });
   console.log("");
-  console.log("✅ Configuración guardada.");
-  console.log("   Ahora las facturas que no reconozca se leen con IA (usá --llm en el comando facturas).");
+  console.log(t("config_saved"));
+  console.log(t("config_llm_hint"));
 
   // Renaming setup
   console.log("");
-  const wantRename = await prompt("¿Querés renombrar los PDF procesados con tu formato? (s/N): ");
+  const wantRename = await prompt(t("ask_rename"));
   if (/^s/i.test(wantRename)) {
     const current2 = readEnv();
     const pattern = await prompt(
-      `Formato del nombre. Podés usar: {fecha} {proveedor} {palabra} {numero}\n` +
-      `Ejemplo: {fecha}_{proveedor}_{palabra} → 2026-08-01_miller_alquiler-trasteros.pdf\n` +
-      `(Enter para dejar: ${current2.PDF_NAME_PATTERN || "{fecha}_{proveedor}_{palabra}"}): `,
+      t("ask_pattern", { default: current2.PDF_NAME_PATTERN || "{fecha}_{proveedor}_{palabra}" }),
     );
     const merged2 = {
       ...readEnv(),
@@ -141,11 +154,11 @@ async function runConfig(args) {
     };
     await writeFile(ENV_PATH, Object.entries(merged2).map(([k, v]) => `${k}=${v}`).join("\n") + "\n", { mode: 0o600 });
     console.log("");
-    console.log("   La palabra clave (3-4 palabras de qué es la factura) se genera automáticamente:");
-    console.log("   • con IA (si configuraste clave): resumen inteligente (ej. 'alquiler trasteros')");
-    console.log("   • sin IA: de las primeras palabras de los artículos");
+    console.log(t("keyword_expl"));
+    console.log(t("keyword_ai"));
+    console.log(t("keyword_noai"));
     console.log("");
-    console.log("   Las próximas facturas se renombrarán automáticamente (usá --rename, y --llm para el resumen con IA).");
+    console.log(t("rename_next"));
   }
 }
 
@@ -159,17 +172,16 @@ async function askForFolder() {
     path.join(process.env.HOME || "", "Desktop", "Facturas"),
   ];
   const existing = candidates.find((c) => existsSync(c));
-  const hint = existing ? ` (o Enter para usar: ${existing})` : "";
-  const raw = await prompt(`Arrastrá la carpeta donde están tus facturas a esta ventana y presioná Enter${hint}:
-> `);
+  const hint = existing ? t("folder_default_hint", { path: existing }) : "";
+  const raw = await prompt(t("ask_folder", { hint }));
   const cleaned = (raw || "").replace(/^['"]|['"]$/g, "").trim();
   const chosen = cleaned || existing;
   if (!chosen) {
-    console.error("No escribiste ninguna carpeta. Probá de nuevo: pdf-tool facturas");
+    console.error(t("no_folder"));
     process.exit(1);
   }
   if (!existsSync(chosen)) {
-    console.error(`No existe la carpeta: ${chosen}`);
+    console.error(t("folder_missing", { path: chosen }));
     process.exit(1);
   }
   return chosen;
@@ -254,38 +266,7 @@ async function main() {
     return;
   }
   if (command === "ayuda" || command === "help" || command === "-h" || command === "--help" || !command) {
-    console.log(`
-pdf-tool — extrae datos de tus facturas en PDF.
-
-CÓMO USARLO:
-  pdf-tool facturas
-      Te guía paso a paso:
-        1. Elegís la CARPETA DE ENTRADA (podés ARRASTRARLA a la ventana)
-        2. Elegís dónde guardar el resultado (Enter = misma carpeta)
-        3. Elegís si renombrar los PDF y con qué formato (configurable en
-           pdf-tool config: {fecha}_{proveedor}_{palabra})
-      Guarda facturas.csv con número, fecha, totales y artículos.
-
-  pdf-tool facturas /ruta/a/tus/facturas --ocr
-      Indicás la carpeta directamente; --ocr lee las escaneadas.
-
-  pdf-tool facturas /ruta/a/tus/facturas --rename --llm
-      Renombra los PDF con tu formato y resumen con IA.
-
-  pdf-tool facturas /ruta/a/tus/facturas --out mi-lista.csv
-      Guarda el resultado en otro archivo.
-
-  pdf-tool config
-      Configurá tu clave de IA, el formato de nombres y las palabras clave
-      por proveedor.
-
-  pdf-tool facturas <carpeta> --rename
-      Además de guardar el CSV, renombra los PDF con tu formato
-      (fecha_proveedor_palabra, configurable en pdf-tool config).
-
-  pdf-tool ayuda
-      Muestra esta ayuda.
-`);
+    console.log(t("help_title") + t("help_usage") + t("help_scan") + t("help_scan_direct") + t("help_scan_rename") + t("help_config") + t("help_out") + t("help_help"));
     return;
   }
   if (command === "facturas" || command === "folder" || command === "scan") {
@@ -307,7 +288,7 @@ CÓMO USARLO:
     }
     let useLlm = rest.includes("--llm");
     if (doRename && !rest.includes("--llm") && envNow.MINIMAX_API_KEY) {
-      useLlm = /^s/i.test(await prompt("¿Querés el resumen con IA para los nombres? (s/N): "));
+      useLlm = /^s|^y/i.test(await prompt(t("ask_ai_names")));
     }
     // output folder: ask if not given via --out
     const outIdx = rest.indexOf("--out");
@@ -315,15 +296,15 @@ CÓMO USARLO:
       rest.find((a) => a.startsWith("--out="))?.split("=")[1] ??
       (outIdx >= 0 ? rest[outIdx + 1] : undefined);
     if (!outPath) {
-      const rawOut = await prompt(`¿Dónde guardo el resultado? (Enter = misma carpeta: ${folder}): `);
+      const rawOut = await prompt(t("ask_out", { folder }));
       const cleanedOut = (rawOut || "").replace(/^['"]|['"]$/g, "").trim();
       outPath = path.join(cleanedOut || folder, "facturas.csv");
     }
 
-    console.log(`Escaneando ${folder} ...`);
+    console.log(t("scanning", { folder }));
     const files = await listPdfFiles(folder).catch(() => []);
     if (files.length === 0) {
-      console.error("No encontré archivos PDF en esa carpeta. Revisá la ruta.");
+      console.error(t("no_pdfs"));
       process.exit(1);
     }
     let processed = 0;
@@ -338,7 +319,7 @@ CÓMO USARLO:
     process.stdout.write("\r" + " ".repeat(40) + "\r");
     await writeFile(outPath, csvFromRows(rows));
     console.log(friendlySummary(rows, folder));
-    console.log(`📄 Resultado guardado en: ${outPath}`);
+    console.log(t("result_saved", { path: outPath }));
     if (doRename) {
       const renamed = await renamePdfs(rows, folder, readEnv());
       if (renamed.length) {
@@ -348,21 +329,21 @@ CÓMO USARLO:
           if (byName.has(row.file)) row.file = byName.get(row.file);
         }
         await writeFile(outPath, csvFromRows(rows));
-        console.log(`\n📁 Renombradas ${renamed.length} facturas:`);
+        console.log(t("renamed_n", { n: renamed.length }));
         for (const r of renamed.slice(0, 10)) console.log(`   ${r.from} → ${r.to}`);
-        if (renamed.length > 10) console.log(`   ... y ${renamed.length - 10} más`);
-        console.log("   (formato: " + (readEnv().PDF_NAME_PATTERN || "{fecha}_{proveedor}_{palabra}") + ")");
+        if (renamed.length > 10) console.log(t("renamed_more", { n: renamed.length - 10 }));
+        console.log(t("renamed_format", { pattern: readEnv().PDF_NAME_PATTERN || "{fecha}_{proveedor}_{palabra}" }));
       } else {
-        console.log("\n⚠ No se renombró nada (¿ya tenían el formato o hubo errores?).");
+        console.log(t("renamed_none"));
       }
     }
     return;
   }
-  console.error(`Comando desconocido: "${command}". Escribí "pdf-tool ayuda".`);
+  console.error(t("unknown_cmd", { cmd: command }));
   process.exit(2);
 }
 
 main().catch((error) => {
-  console.error("Error: " + (error?.message ?? error));
+  console.error(t("error", { msg: error?.message ?? error }));
   process.exit(1);
 });
