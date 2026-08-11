@@ -8,7 +8,7 @@
 // column-aligned totals tables, etc.). When no vendor matches, callers fall
 // back to the generic extractor or the MiniMax LLM path.
 
-export const VENDOR_NAMES = ["mercadona", "miller", "empark", "acastimar"];
+export const VENDOR_NAMES = ["mercadona", "miller", "empark", "acastimar", "doctoragua"];
 
 const VENDOR_MARKERS = [
   { name: "mercadona", markers: [/MERCADONA\s+S\.A\./i] },
@@ -24,6 +24,7 @@ const VENDOR_MARKERS = [
     name: "acastimar",
     markers: [/ACASTIMAR,\s*S\.L\./i, /FACTURA\s+VENTA\b/i],
   },
+    { name: "doctoragua", markers: [/doctoragua\.es/i, /DOCTOR AGUA/i, /B52537339/i] },
 ];
 
 export function detectVendor(text) {
@@ -47,6 +48,10 @@ function toIsoDate(value) {
   m = trimmed.match(/^(\d{2})-(\d{2})-(\d{4})$/);
   if (m) return `${m[3]}-${m[2]}-${m[1]}`;
   return null;
+}
+
+function escapeRe(s) {
+  return String(s ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function parseAmount(value) {
@@ -148,10 +153,39 @@ function parseAcastimar(text) {
   return { fields, vendor: "acastimar" };
 }
 
+// --- DOCTOR AGUA S.L. (auto-generated from doctor-agua-clean.pdf) ---
+
+const DOCTORAGUA_NUMBER_RE = /FACTURA #\s*([A-Z0-9][A-Z0-9/\-.]{2,})/i;
+const DOCTORAGUA_DATE_RE = /Fecha\s*[\s\S]{0,150}?(\d{2}[\/\-]\d{2}[\/\-]\d{4}|\d{4}[\/\-]\d{2}[\/\-]\d{2})/i;
+const DOCTORAGUA_SUBTOTAL_RE = /BASE IMPONIBLE\s*([\d.,]+)/i;
+const DOCTORAGUA_TAX_RE = /IMPUESTO\s*([\d.,]+)/i;
+const DOCTORAGUA_TOTAL_RE = /TOTAL\s*([\d.,]+)/i;
+
+function parseDoctoragua(text) {
+  const fields = {};
+  const number = text.match(DOCTORAGUA_NUMBER_RE)?.[1] ?? null;
+  if (number) fields.invoiceNumber = number;
+  const date = toIsoDate(text.match(DOCTORAGUA_DATE_RE)?.[1] ?? null);
+  if (date) fields.invoiceDate = date;
+  const sub = DOCTORAGUA_SUBTOTAL_RE ? text.match(DOCTORAGUA_SUBTOTAL_RE)?.[1] ?? null : null;
+  const tax = DOCTORAGUA_TAX_RE ? text.match(DOCTORAGUA_TAX_RE)?.[1] ?? null : null;
+  const total = DOCTORAGUA_TOTAL_RE ? text.match(DOCTORAGUA_TOTAL_RE)?.[1] ?? null : null;
+  if (sub || tax || total) {
+    fields.totals = {
+      subtotal: sub ? parseAmount(sub) : null,
+      tax: tax ? parseAmount(tax) : null,
+      total: total ? parseAmount(total) : null,
+    };
+  }
+  fields.taxLabel = /\bIGIC\b/i.test(text) ? "IGIC" : /\bIVA\b/i.test(text) ? "IVA" : null;
+  return { fields, vendor: "doctoragua" };
+}
+
 const PARSERS = {
   miller: parseMiller,
   empark: parseEmpark,
   acastimar: parseAcastimar,
+  doctoragua: parseDoctoragua,
 };
 
 // Parse with the vendor-specific extractor. Returns null when the vendor is
@@ -165,4 +199,96 @@ export function parseVendorInvoice(text) {
   return parser(typeof text === "string" ? text : "");
 }
 
-export const _internal = { toIsoDate, parseAmount };
+function boundedRegion(text, start, end) {
+  const from = start ? text.indexOf(start) : 0;
+  if (from < 0) return text;
+  const to = end ? text.indexOf(end, from) : text.length;
+  return to >= 0 ? text.slice(from, to) : text.slice(from);
+}
+
+// Column headers that can leak into the first line-item description when the
+// bounded region starts at the header row ("Refª. Descripción Uds. Precio ud...").
+const LINE_HEADER_TOKENS = [
+  "Refª", "Descripción", "Uds", "Precio ud", "Dto", "Importe", "IGIC",
+  "Cant", "Código", "Precio Unit", "Precio Unitario", "Total", "Uni", "Artículo",
+];
+
+function cleanLineDescription(value) {
+  // Drop "Número de serie"/"Números de serie" fragments and collapse whitespace.
+  let out = String(value ?? "")
+    .replace(/n[úu]mero\s+de\s+serie\s*:\s*[A-Z0-9]+/gi, "")
+    .replace(/n[úu]meros\s+de\s+serie\s*:\s*[A-Z0-9]+/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Strip a leading run of column-header tokens (token may carry a trailing
+  // period, e.g. "Dto." / "Uds.").
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const token of LINE_HEADER_TOKENS) {
+      const re = new RegExp(`^${escapeRe(token)}\\.?\\s+`);
+      if (re.test(out)) {
+        out = out.replace(re, "");
+        changed = true;
+        break;
+      }
+    }
+  }
+  // The line items follow the client block, which often ends with the client
+  // phone ("Teléfono : 626824200"); cut there so the first description starts
+  // at the first article instead of the header/address noise.
+  const phoneCut = out.match(/Tel[ée]fono\s*:\s*[\d\s]+/i);
+  if (phoneCut) out = out.slice(phoneCut.index + phoneCut[0].length);
+  return out.trim();
+}
+
+// Per-vendor line-item row parsers. Each returns an array of rows with the
+// numeric columns the layout prints (qty, unit price, amount, tax rate...).
+const VENDOR_LINE_PARSERS = {
+  miller(text) {
+    const region = boundedRegion(text, "Refª", "Recibo Resumen");
+    return [...region.matchAll(
+      /([\s\S]*?M[OÓ]DULO\s+Nº\s*:\s*[A-Z0-9]+)\s+(\d+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/g,
+    )].map((m) => ({
+      description: cleanLineDescription(m[1]),
+      units: parseAmount(m[2]),
+      unit_price_eur: parseAmount(m[3]),
+      amount_eur: parseAmount(m[4]),
+      tax_rate: parseAmount(m[5]),
+    }));
+  },
+  empark(text) {
+    const region = boundedRegion(text, "Detalle de Facturación", "Detalle del IGIC");
+    return [...region.matchAll(
+      /([\s\S]*?)(\d+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s*%/g,
+    )].map((m) => ({
+      description: cleanLineDescription(m[1]),
+      units: parseAmount(m[2]),
+      unit_price_eur: parseAmount(m[3]),
+      amount_eur: parseAmount(m[4]),
+      tax_rate: parseAmount(m[5]),
+    }));
+  },
+  acastimar(text) {
+    const region = boundedRegion(text, "Precio Unitario", "Importe neto");
+    return [...region.matchAll(
+      /([\s\S]*?)(\d+,\d{2})\s+(\d+,\d{2})\s+(\d+,\d{2})\s+([A-Z0-9.]+)\s+(\d+,\d{2})\s+(\d+,\d{2})/g,
+    )].map((m) => ({
+      description: cleanLineDescription(m[1]),
+      list_price_eur: parseAmount(m[2]),
+      unit_price_eur: parseAmount(m[3]),
+      discount_pct: parseAmount(m[4]),
+      reference: m[5],
+      amount_eur: parseAmount(m[6]),
+      units: parseAmount(m[7]),
+    }));
+  },
+};
+
+export function parseVendorLineItems(text, vendor) {
+  const parser = VENDOR_LINE_PARSERS[vendor];
+  if (!parser) return [];
+  return parser(typeof text === "string" ? text : "");
+}
+
+export const _internal = { toIsoDate, parseAmount, cleanLineDescription };
