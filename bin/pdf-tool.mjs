@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { scanFolder, listPdfFiles } from "../src/folder-scan.js";
+import { PROVIDERS } from "../src/providers.js";
 import { t } from "../src/i18n.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -115,23 +116,47 @@ async function runConfig(args) {
   console.log(t("config_title"));
   console.log(t("config_sep"));
   const current = readEnv();
-  const wantAi = await prompt(t("ask_ai"));
-  if (!/^s/i.test(wantAi)) {
+  console.log("");
+  console.log(t("provider_pick"));
+  PROVIDERS.forEach((p, i) => {
+    console.log(`  [${i + 1}] ${p.name} — ${p.tagline}`);
+  });
+  console.log("");
+  const pick = await prompt(t("provider_prompt"));
+  const idx = Number.parseInt(pick, 10) - 1;
+  const provider = PROVIDERS[idx] ?? (pick ? PROVIDERS.find((p) => p.id === pick.toLowerCase()) : null);
+  if (!provider) {
     console.log(t("no_ai"));
     return;
   }
-  const key = await prompt(t("ask_key"));
+  // Clave (los proveedores locales sin key la omiten)
+  let key = current.LLM_API_KEY ?? current.MINIMAX_API_KEY ?? "";
+  if (provider.needsKey) {
+    const answer = await prompt(t("provider_key", { provider: provider.name }));
+    if (answer) key = answer.trim();
+  } else if (!key) {
+    key = "local";
+  }
   if (!key) {
     console.log(t("no_key"));
     return;
   }
-  const model = await prompt(t("ask_model", { model: current.MINIMAX_MODEL || "MiniMax-M3" }));
-  const baseUrl = await prompt(t("ask_base", { url: current.MINIMAX_BASE_URL || "https://api.minimax.io/v1" }));
+  const defaultModel = current.LLM_MODEL ?? current.MINIMAX_MODEL ?? provider.model;
+  const modelAnswer = await prompt(t("ask_model", { model: defaultModel }));
+  const model = modelAnswer || defaultModel;
+  const defaultUrl = current.LLM_BASE_URL ?? current.MINIMAX_BASE_URL ?? provider.baseUrl;
+  const urlAnswer = await prompt(t("ask_base", { url: defaultUrl }));
+  const baseUrl = urlAnswer || defaultUrl;
+  if (!baseUrl) {
+    console.log(t("no_base_url"));
+    return;
+  }
   const merged = {
     ...current,
-    MINIMAX_API_KEY: key,
-    MINIMAX_MODEL: model || current.MINIMAX_MODEL || "MiniMax-M3",
-    MINIMAX_BASE_URL: baseUrl || current.MINIMAX_BASE_URL || "https://api.minimax.io/v1",
+    PROVIDER: provider.id,
+    LLM_API_KEY: key,
+    LLM_BASE_URL: baseUrl,
+    LLM_MODEL: model,
   };
   const body = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
   await writeFile(ENV_PATH, body, { mode: 0o600 });

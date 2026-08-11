@@ -13,3 +13,7 @@ services:
       MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
       MINIMAX_BASE_URL: ${MINIMAX_BASE_URL:-https://api.minimax.io/v1}
       MINIMAX_MODEL: ${MINIMAX_MODEL:-MiniMax-M3}
+      # Variables genéricas del LLM (pdf-tool config). Preceden a las MINIMAX_*.
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}

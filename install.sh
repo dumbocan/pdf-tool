@@ -174,9 +174,25 @@ esac
     echo "    pdf-tool ayuda"
     echo "    pdf-tool facturas /ruta/a/tus/facturas"
     echo "    pdf-tool facturas /ruta/a/tus/facturas --ocr   (para escaneadas)"
-    echo ""
-echo "¿Facturas de proveedores desconocidos? Configurá tu clave de IA:"
-echo "    pdf-tool config"
-echo ""
-echo "Si el comando no aparece, abrí una terminal nueva."
-echo "=============================================="
+        echo ""
+        # 5. Configuración interactiva de IA (estilo OpenClaw: elegís proveedor y pegás la clave)
+        if [ -t 0 ]; then
+          echo "➜ ¿Querés configurar tu proveedor de IA ahora (elegís y pegás la clave)? (s/N)"
+          read -r WANT_AI || WANT_AI=n
+          if [ "${WANT_AI:-n}" = "s" ] || [ "${WANT_AI:-n}" = "S" ] || [ "${WANT_AI:-n}" = "y" ] || [ "${WANT_AI:-n}" = "Y" ]; then
+            "$BIN_DIR/pdf-tool" config
+          fi
+        elif [ -r /dev/tty ]; then
+          # Vino por pipe (curl | bash): leemos y respondemos desde el terminal real.
+          echo "➜ ¿Querés configurar tu proveedor de IA ahora (elegís y pegás la clave)? (s/N)"
+          read -r WANT_AI < /dev/tty || WANT_AI=n
+          if [ "${WANT_AI:-n}" = "s" ] || [ "${WANT_AI:-n}" = "S" ] || [ "${WANT_AI:-n}" = "y" ] || [ "${WANT_AI:-n}" = "Y" ]; then
+            "$BIN_DIR/pdf-tool" config < /dev/tty
+          fi
+        else
+          echo "➜ Para leer facturas desconocidas con IA, configurá tu proveedor:"
+          echo "    pdf-tool config"
+        fi
+        echo ""
+    echo "Si el comando no aparece, abrí una terminal nueva."
+    echo "=============================================="

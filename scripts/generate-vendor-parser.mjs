@@ -84,13 +84,13 @@ async function callLlm(systemInstruction, userContent, apiKey, baseUrl, model) {
 
 // ---- Main ----
 const env = loadEnv();
-const apiKey = env.MINIMAX_API_KEY ?? process.env.MINIMAX_API_KEY ?? "";
+const apiKey = env.LLM_API_KEY ?? env.MINIMAX_API_KEY ?? process.env.MINIMAX_API_KEY ?? "";
 if (!apiKey) {
-  console.error("MINIMAX_API_KEY not found in ../.env");
+  console.error("LLM_API_KEY not found in ../.env (run: pdf-tool config)");
   process.exit(2);
 }
-const baseUrl = env.MINIMAX_BASE_URL ?? "https://api.minimax.io/v1";
-const model = env.MINIMAX_MODEL ?? "MiniMax-M3";
+const baseUrl = env.LLM_BASE_URL ?? env.MINIMAX_BASE_URL ?? "https://api.minimax.io/v1";
+const model = env.LLM_MODEL ?? env.MINIMAX_MODEL ?? "MiniMax-M3";
 
 // 1. Extract text (reuse the deterministic pipeline)
 const { extractTextFromPdf } = await import("../src/extract.js");

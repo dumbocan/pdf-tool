@@ -60,17 +60,30 @@ pdf-tool facturas
 📄 Resultado guardado en: facturas.csv
 ```
 
-### Nombrar tus PDF como a vos te gusta
+    ### Configurá tu IA (una vez, con el instalador o con `pdf-tool config`)
 
-```bash
-pdf-tool config
-```
-Te pregunta el formato (por defecto `{fecha}_{proveedor}_{palabra}`) y, con la IA configurada, la palabra clave sale sola leyendo la factura:
+    Durante la instalación se te ofrece configurar el **proveedor de IA**. Elegís de un menú (MiniMax, OpenAI, OpenRouter, DeepSeek, Groq, o local con Ollama/LM Studio), pegás tu clave y listo — el instalador pone solos la dirección y el modelo correctos:
 
-```
-scan_20260730_145823.pdf  →  2026-08-01_suministros-marinos_ancla-cadena.pdf
-IMG_8456.pdf              →  2026-08-01_alquiler-trastos_box-mensual.pdf
-```
+    ```
+    ➜ Elegí tu proveedor de IA:
+      [1] MiniMax — Rápido y barato, muy bueno en español
+      [2] OpenAI — GPT, el clásico
+      [3] OpenRouter — Una sola clave para muchos modelos
+      ...
+      [6] Local (Ollama) — Sin internet ni clave
+    Número (o Enter = salir sin IA): 1
+    ➜ Pegá tu clave de MiniMax (Enter = dejar la que ya tenés): sk-...
+    ➜ Modelo (Enter = MiniMax-M3):
+    ➜ Dirección del servicio (Enter = https://api.minimax.io/v1):
+    ✅ Configuración guardada.
+    ```
+
+    Podés cambiarlo cuando quieras con `pdf-tool config`, que también te pregunta el formato de nombres (por defecto `{fecha}_{proveedor}_{palabra}`). Con la IA configurada, la palabra clave sale sola leyendo la factura:
+
+    ```
+    scan_20260730_145823.pdf  →  2026-08-01_suministros-marinos_ancla-cadena.pdf
+    IMG_8456.pdf              →  2026-08-01_alquiler-trastos_box-mensual.pdf
+    ```
 
 La fecha primero → se ordenan solos por fecha. 🗂️
 
@@ -102,7 +115,7 @@ pdf-tool facturas C:\Mis Documentos\Facturas --ocr
 - **Sin `--llm`**: todo queda en tu máquina. Cero tráfico de red, cero telemetría, cero subidas.
 - Los PDFs no ejecutan nada: el lector está endurecido (sin JavaScript del documento, sin imágenes, sin persistencia).
 - El CSV protege contra fórmulas maliciosas de Excel (un PDF malintencionado no puede inyectar código en tu hoja de cálculo).
-- Con `--llm`, solo el **texto ya extraído** se envía a la API de MiniMax — nunca los bytes del PDF.
+- Con `--llm`, solo el **texto ya extraído** se envía a la API del proveedor que configuraste — nunca los bytes del PDF.
 
 ---
 
@@ -127,13 +140,13 @@ curl -X POST http://127.0.0.1:3000/extract \
 ```bash
 node scripts/generate-vendor-parser.mjs factura-nueva.pdf
 ```
-MiniMax analiza la factura, identifica las etiquetas (número, fecha, totales, artículos) y **genera el parser** con su test. Así, cualquier factura nueva — de supermercado, suministros, alquileres, lo que sea — se incorpora con un solo comando. El resultado se revisa y se commitea — nunca se auto-commitea código desde un PDF.
+Tu proveedor de IA (el que configuraste en `pdf-tool config`) analiza la factura, identifica las etiquetas (número, fecha, totales, artículos) y **genera el parser** con su test. Así, cualquier factura nueva — de supermercado, suministros, alquileres, lo que sea — se incorpora con un solo comando. El resultado se revisa y se commitea — nunca se auto-commitea código desde un PDF.
 
 ### Endpoints HTTP
 | Ruta | Qué hace |
 |---|---|
 | `POST /extract` | Extrae texto + campos + artículos (determinístico) |
-| `POST /extract-with-llm` | Igual + estructura con MiniMax (opcional, requiere clave) |
+| `POST /extract-with-llm` | Igual + estructura con IA (opcional, requiere clave) |
 | `GET /healthz` | Estado |
 | `GET /version` | Versión |
 | `POST /mcp` | Interfaz MCP (para agentes como Laia) |

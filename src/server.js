@@ -299,9 +299,9 @@ export function createServer({
   authToken = (envWithFile().AUTH_TOKEN ?? DEFAULTS.authToken) || "",
   extract = extractTextFromPdf,
   fetchImpl = globalThis.fetch,
-  llmApiKey = (envWithFile().MINIMAX_API_KEY ?? "") || "",
-  llmBaseUrl = envWithFile().MINIMAX_BASE_URL || DEFAULTS.llmBaseUrl,
-  llmModel = envWithFile().MINIMAX_MODEL || DEFAULTS.llmModel,
+  llmApiKey = (envWithFile().LLM_API_KEY ?? envWithFile().MINIMAX_API_KEY ?? "") || "",
+  llmBaseUrl = (envWithFile().LLM_BASE_URL ?? envWithFile().MINIMAX_BASE_URL) || DEFAULTS.llmBaseUrl,
+  llmModel = (envWithFile().LLM_MODEL ?? envWithFile().MINIMAX_MODEL) || DEFAULTS.llmModel,
   workspaceRoot,
 } = {}) {
   const server = createHttpServer(async (request, response) => {

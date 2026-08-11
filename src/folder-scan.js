@@ -133,10 +133,11 @@ export async function scanFolder(folder, { useOcr = false, useLlm = false, onPro
 
 async function llmEnrich(text) {
   const env = loadEnv();
-  const apiKey = env.MINIMAX_API_KEY ?? "";
+  // LLM_* (nuevo, genérico) con fallback a MINIMAX_* (config previa)
+  const apiKey = env.LLM_API_KEY ?? env.MINIMAX_API_KEY ?? "";
   if (!apiKey) return null;
-  const baseUrl = env.MINIMAX_BASE_URL ?? "https://api.minimax.io/v1";
-  const model = env.MINIMAX_MODEL ?? "MiniMax-M3";
+  const baseUrl = env.LLM_BASE_URL ?? env.MINIMAX_BASE_URL ?? "https://api.minimax.io/v1";
+  const model = env.LLM_MODEL ?? env.MINIMAX_MODEL ?? "MiniMax-M3";
   try {
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
