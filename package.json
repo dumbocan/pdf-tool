@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Standalone PDF invoice extraction: folder scanning, per-vendor parsers, OCR for scans.",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test test/*.test.js",

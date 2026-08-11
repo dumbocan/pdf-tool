@@ -21,26 +21,45 @@ echo "=============================================="
 echo "  pdf-tool — instalador"
 echo "=============================================="
 
-# 1. Node.js
-if ! command -v node >/dev/null 2>&1; then
+# 1. Node.js (>= 22 — el CLI usa sintaxis moderna que Node viejo no entiende)
+NODE_MAJOR=0
+if command -v node >/dev/null 2>&1; then
+  NODE_MAJOR=$(node -e 'process.stdout.write(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)
+fi
+if ! command -v node >/dev/null 2>&1 || [ "$NODE_MAJOR" -lt 22 ] 2>/dev/null; then
   echo ""
-  echo "➜ No encontré Node.js. Instalándolo..."
+  if command -v node >/dev/null 2>&1; then
+    echo "➜ Node v$(node --version) es viejo (pdf-tool necesita >=22). Lo actualizo a Node LTS..."
+  else
+    echo "➜ No encontré Node.js. Instalándolo (LTS >=22)..."
+  fi
   if command -v nvm >/dev/null 2>&1 || [ -s "$HOME/.nvm/nvm.sh" ]; then
     # shellcheck disable=SC1091
     [ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh"
-    nvm install --lts >/dev/null
+    nvm install --lts
   elif command -v brew >/dev/null 2>&1; then
     echo "   (macOS) Instalando Node.js con Homebrew..."
     brew install node >/dev/null
   elif command -v apt-get >/dev/null 2>&1; then
-    echo "   (se pedirá tu contraseña para instalar Node.js)"
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq nodejs npm
+    echo "   (se pedirá tu contraseña para actualizar Node.js)"
+    # Quitamos el Node viejo de los repos de Ubuntu: sus headers (libnode-dev)
+    # chocan con el de NodeSource al instalar. Sin esto apt falla a mitad de camino.
+    if command -v node >/dev/null 2>&1 || dpkg -l nodejs >/dev/null 2>&1; then
+      sudo apt-get remove -y -qq nodejs npm libnode-dev >/dev/null 2>&1 || true
+      sudo apt-get autoremove -y -qq >/dev/null 2>&1 || true
+    fi
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+    sudo apt-get install -y -qq nodejs
   else
     echo "✗ No pude instalar Node.js automáticamente."
-    echo "  Instalalo desde https://nodejs.org y volvé a correr este instalador."
+    echo "  Instalalo desde https://nodejs.org (versión LTS >=22) y volvé a correr este instalador."
     exit 1
   fi
+fi
+if ! command -v node >/dev/null 2>&1 || [ "$(node -e 'process.stdout.write(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)" -lt 22 ] 2>/dev/null; then
+  echo "✗ Node sigue siendo viejo/ausente después de la instalación."
+  echo "  Instalalo manualmente desde https://nodejs.org (LTS >=22) y volvé a correr este instalador."
+  exit 1
 fi
 NODE_VERSION=$(node --version 2>/dev/null || echo "desconocida")
 echo "➜ Node.js: $NODE_VERSION"
@@ -98,7 +117,7 @@ else
 fi
 cd "$INSTALL_DIR"
 if [ ! -d node_modules ]; then
-  pnpm install --prod --ignore-scripts >/dev/null 2>&1
+  pnpm install --prod --ignore-scripts
 fi
 
 mkdir -p "$BIN_DIR"

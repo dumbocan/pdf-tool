@@ -15,13 +15,30 @@ Write-Host "=============================================="
 Write-Host "  pdf-tool — instalador para Windows"
 Write-Host "=============================================="
 
-# 1. Node.js
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+# 1. Node.js (>= 22 — el CLI usa sintaxis moderna que Node viejo no entiende)
+$nodeMajor = 0
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    $nodeMajor = [int](((node --version 2>$null) -replace '[vV]', '') -split '\.')[0]
+}
+if (-not (Get-Command node -ErrorAction SilentlyContinue) -or $nodeMajor -lt 22) {
     Write-Host ""
-    Write-Host "➜ Node.js no está instalado. Instalándolo con winget..."
+    if (Get-Command node -ErrorAction SilentlyContinue) {
+        Write-Host "➜ Node v$(node --version 2>$null) es viejo (pdf-tool necesita >=22). Actualizándolo con winget..."
+    } else {
+        Write-Host "➜ Node.js no está instalado. Instalando Node LTS (>=22) con winget..."
+    }
     winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements | Out-Null
     # refrescar PATH
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+}
+# verificación post-instalación
+$nodeMajor = 0
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    $nodeMajor = [int](((node --version 2>$null) -replace '[vV]', '') -split '\.')[0]
+}
+if (-not (Get-Command node -ErrorAction SilentlyContinue) -or $nodeMajor -lt 22) {
+    Write-Host "✗ Node sigue siendo viejo o ausente. Instalalo manualmente desde https://nodejs.org (LTS >=22) y volvé a correr este instalador."
+    exit 1
 }
 Write-Host "➜ Node.js: $(node --version 2>$null)"
 
@@ -59,9 +76,21 @@ if (Test-Path "$installDir\.git") {
     git clone --depth 1 https://github.com/dumbocan/pdf-tool.git $installDir
 }
 Push-Location $installDir
-corepack enable 2>$null | Out-Null
+# pnpm (corepack viene con Node; si no, fallback a npm)
+if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+    corepack enable 2>$null | Out-Null
+    corepack prepare pnpm@latest --activate 2>$null | Out-Null
+}
+if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+    Write-Host "➜ corepack no disponible; instalando pnpm con npm..."
+    npm install -g pnpm 2>$null | Out-Null
+}
+if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+    Write-Host "✗ No pude instalar pnpm. Corré manualmente:  npm install -g pnpm   y volvé a correr este instalador."
+    exit 1
+}
 if (-not (Test-Path node_modules)) {
-    pnpm install --prod --ignore-scripts 2>$null | Out-Null
+    pnpm install --prod --ignore-scripts
 }
 Pop-Location
 
