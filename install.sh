@@ -81,38 +81,47 @@ if ! command -v pnpm >/dev/null 2>&1; then
 fi
 echo "➜ pnpm: $(pnpm --version 2>/dev/null || echo 'no disponible')"
 
-# 2. tesseract (OCR para facturas escaneadas)
-if ! command -v tesseract >/dev/null 2>&1; then
-  echo ""
-  echo "➜ No encontré tesseract (para leer facturas escaneadas). Instalándolo..."
+    # 2. tesseract (OCR para facturas escaneadas)
+    TESSERACT_OK=0
+    if ! command -v tesseract >/dev/null 2>&1; then
+      echo ""
+      echo "➜ No encontré tesseract (para leer facturas escaneadas). Instalándolo..."
       if command -v apt-get >/dev/null 2>&1; then
         echo "   (se pedirá tu contraseña)"
         sudo apt-get update -qq
         # Tolerante: si apt falla (p. ej. otro paquete roto del sistema),
         # seguimos sin OCR en vez de abortar toda la instalación.
         sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-spa poppler-utils || {
-          echo "⚠ apt no pudo instalar tesseract (puede haber otro paquete roto en el sistema)."
-          echo "  Las facturas escaneadas no se leerán, pero las digitales sí."
+          echo "⚠ apt no pudo instalar tesseract (tu sistema tiene paquetes a medio instalar)."
+          echo "  El pdf-tool se instala igual, pero las facturas ESCANEADAS no se leerán."
+          echo "  Para arreglar el sistema, corré:  sudo apt --fix-broken install"
         }
-  elif command -v brew >/dev/null 2>&1; then
-    brew install tesseract tesseract-lang poppler >/dev/null
-  else
-    echo "⚠ No pude instalar tesseract automáticamente."
-    echo "  Las facturas escaneadas no se leerán, pero las digitales sí."
-  fi
-else
-  echo "➜ tesseract: ya instalado"
-fi
+      elif command -v brew >/dev/null 2>&1; then
+        brew install tesseract tesseract-lang poppler >/dev/null
+        TESSERACT_OK=1
+      else
+        echo "⚠ No pude instalar tesseract automáticamente."
+        echo "  Las facturas escaneadas no se leerán, pero las digitales sí."
+      fi
+      command -v tesseract >/dev/null 2>&1 && TESSERACT_OK=1
+    else
+      echo "➜ tesseract: ya instalado"
+      TESSERACT_OK=1
+    fi
 
 # 2b. git (necesario para descargar pdf-tool)
 if ! command -v git >/dev/null 2>&1; then
   echo ""
   echo "➜ No encontré git. Instalándolo..."
-  if command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq git
-  elif command -v brew >/dev/null 2>&1; then
-    brew install git >/dev/null
+      if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq git || {
+          echo "✗ apt no pudo instalar git (tu sistema tiene paquetes a medio instalar)."
+          echo "  Corré primero:  sudo apt --fix-broken install   y volvé a correr este instalador."
+          exit 1
+        }
+      elif command -v brew >/dev/null 2>&1; then
+        brew install git >/dev/null
   else
     echo "✗ No pude instalar git automáticamente."
     echo "  Instalalo (https://git-scm.com) y volvé a correr este instalador."
@@ -151,15 +160,21 @@ case ":$PATH:" in
      ;;
 esac
 
-echo ""
-echo "=============================================="
-echo "✅ ¡Listo! pdf-tool quedó instalado."
-echo ""
-echo "Probá con:"
-echo "    pdf-tool ayuda"
-echo "    pdf-tool facturas /ruta/a/tus/facturas"
-echo "    pdf-tool facturas /ruta/a/tus/facturas --ocr   (para escaneadas)"
-echo ""
+    echo ""
+    echo "=============================================="
+    echo "✅ ¡Listo! pdf-tool quedó instalado."
+    if [ "$TESSERACT_OK" != "1" ]; then
+      echo ""
+      echo "⚠ OJO: el OCR no quedó instalado (tesseract)."
+      echo "  Las facturas ESCANEADAS no se leerán hasta que lo instales."
+      echo "  Corré:  sudo apt install tesseract-ocr tesseract-ocr-spa poppler-utils"
+    fi
+    echo ""
+    echo "Probá con:"
+    echo "    pdf-tool ayuda"
+    echo "    pdf-tool facturas /ruta/a/tus/facturas"
+    echo "    pdf-tool facturas /ruta/a/tus/facturas --ocr   (para escaneadas)"
+    echo ""
 echo "¿Facturas de proveedores desconocidos? Configurá tu clave de IA:"
 echo "    pdf-tool config"
 echo ""
