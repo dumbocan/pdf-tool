@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
+import { spawnSync } from "node:child_process";
 import { scanFolder, listPdfFiles } from "../src/folder-scan.js";
 import { PROVIDERS } from "../src/providers.js";
 import { t } from "../src/i18n.js";
@@ -82,17 +83,65 @@ function prompt(question) {
 
 const ENV_PATH = path.join(ROOT, ".env");
 
-function readEnv() {
-  if (!existsSync(ENV_PATH)) return {};
-  const out = {};
-  for (const line of readFileSync(ENV_PATH, "utf8").split("\n")) {
-    const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/);
-    if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, "");
-  }
-  return out;
-}
+    function readEnv() {
+      if (!existsSync(ENV_PATH)) return {};
+      const out = {};
+      for (const line of readFileSync(ENV_PATH, "utf8").split("\n")) {
+        const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/);
+        if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, "");
+      }
+      return out;
+    }
 
-async function runConfig(args) {
+    // Modelos realmente instalados en Ollama (best effort: si Ollama no corre,
+    // se usa la lista estática del catálogo).
+    function installedOllamaModels() {
+      try {
+        const res = spawnSync("ollama", ["list"], { encoding: "utf8", timeout: 4000 });
+        if (res.status !== 0 || !res.stdout) return [];
+        const names = res.stdout
+          .split("\n")
+          .slice(1)
+          .map((l) => l.trim().split(/\s+/)[0])
+          .filter((n) => n && n !== "NAME")
+          .map((n) => (n.endsWith(":latest") ? n.slice(0, -7) : n));
+        return [...new Set(names)];
+      } catch {
+        return [];
+      }
+    }
+
+    // Lista numerada de modelos para que el usuario no tenga que saber nombres.
+    async function pickModel(current, provider) {
+      const currentModel = current.LLM_MODEL ?? current.MINIMAX_MODEL ?? "";
+      let available = [...(provider.models ?? [])];
+      if (provider.id === "ollama") {
+        const installed = installedOllamaModels();
+        if (installed.length) available = installed;
+      }
+      // Proveedor "custom" o sin lista: el usuario escribe el nombre exacto.
+      if (provider.id === "custom" || available.length === 0) {
+        const custom = await prompt(t("model_custom", { default: currentModel }));
+        return custom.trim() || currentModel || "";
+      }
+      const def = currentModel || available[0];
+      console.log("");
+      console.log(t("model_pick", { provider: provider.name }));
+      available.forEach((m, i) => console.log(`  [${i + 1}] ${m}`));
+      console.log(`  [${available.length + 1}] ${t("model_other")}`);
+      const answer = await prompt(t("model_prompt", { def }));
+      const trimmed = answer.trim();
+      if (!trimmed) return def;
+      const idx = Number.parseInt(trimmed, 10) - 1;
+      if (idx >= 0 && idx < available.length) return available[idx];
+      if (Number.parseInt(trimmed, 10) === available.length + 1) {
+        const custom = await prompt(t("model_custom", { default: "" }));
+        return custom.trim() || def;
+      }
+      return trimmed; // escribió el nombre exacto directamente
+    }
+
+    async function runConfig(args) {
   const setIdx = args.indexOf("--set");
   if (setIdx >= 0) {
     const kv = args[setIdx + 1] ?? "";
@@ -141,9 +190,7 @@ async function runConfig(args) {
     console.log(t("no_key"));
     return;
   }
-  const defaultModel = current.LLM_MODEL ?? current.MINIMAX_MODEL ?? provider.model;
-  const modelAnswer = await prompt(t("ask_model", { model: defaultModel }));
-  const model = modelAnswer || defaultModel;
+  const model = await pickModel(current, provider);
   const defaultUrl = current.LLM_BASE_URL ?? current.MINIMAX_BASE_URL ?? provider.baseUrl;
   const urlAnswer = await prompt(t("ask_base", { url: defaultUrl }));
   const baseUrl = urlAnswer || defaultUrl;

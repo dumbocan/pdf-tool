@@ -11,11 +11,12 @@ test("provider catalog is well-formed", () => {
     assert.ok(p.name, "name present");
     assert.ok(p.tagline, "tagline present");
     assert.equal(typeof p.needsKey, "boolean", `${p.id} needsKey`);
-    // every provider except "custom" ships a concrete baseUrl + default model,
+    // every provider except "custom" ships a concrete baseUrl + a model pick-list,
     // so a non-engineer can configure it with just a key
     if (p.id !== "custom") {
       assert.ok(p.baseUrl.startsWith("http"), `${p.id} baseUrl`);
-      assert.ok(p.model, `${p.id} default model`);
+      assert.ok(Array.isArray(p.models) && p.models.length > 0 && p.models[0], `${p.id} models`);
+      assert.equal(new Set(p.models).size, p.models.length, `${p.id} unique models`);
     }
   }
 });
