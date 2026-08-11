@@ -48,16 +48,16 @@ if ! command -v node >/dev/null 2>&1 || [ "$NODE_MAJOR" -lt 22 ] 2>/dev/null; th
       sudo apt-get remove -y -qq nodejs npm libnode-dev >/dev/null 2>&1 || true
       sudo apt-get autoremove -y -qq >/dev/null 2>&1 || true
     fi
-    # curl o wget para el setup de NodeSource (Ubuntu minimal puede no traer curl)
-    if command -v curl >/dev/null 2>&1; then
-      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-    elif command -v wget >/dev/null 2>&1; then
-      wget -qO- https://deb.nodesource.com/setup_22.x | sudo -E bash -
-    else
-      sudo apt-get install -y -qq curl >/dev/null 2>&1 || true
-      curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-    fi
-    sudo apt-get install -y -qq nodejs
+        # NodeSource necesita curl internamente (para bajar la GPG key y los .deb).
+        # En Ubuntu minimal puede no estar: lo instalamos antes de seguir.
+        if ! command -v curl >/dev/null 2>&1; then
+          sudo apt-get install -y -qq curl >/dev/null 2>&1 || {
+            echo "✗ No pude instalar curl, necesario para instalar Node.js."
+            exit 1
+          }
+        fi
+        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+        sudo apt-get install -y -qq nodejs
   else
     echo "✗ No pude instalar Node.js automáticamente."
     echo "  Instalalo desde https://nodejs.org (versión LTS >=22) y volvé a correr este instalador."
