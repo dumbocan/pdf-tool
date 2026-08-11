@@ -1,0 +1,168 @@
+// Per-vendor deterministic invoice parsers for the businesses Javier works with.
+// Each parser is a pure regex extractor over the already-extracted PDF text.
+// Values are plain strings / numbers and always labeled untrusted — the same
+// contract as the generic extractInvoiceFields() in extract.js.
+//
+// Vendors are detected by unique markers in the text, then parsed with
+// vendor-specific label patterns (layouts differ: "Refª." vs "FACTURA Nº",
+// column-aligned totals tables, etc.). When no vendor matches, callers fall
+// back to the generic extractor or the MiniMax LLM path.
+
+export const VENDOR_NAMES = ["mercadona", "miller", "empark", "acastimar"];
+
+const VENDOR_MARKERS = [
+  { name: "mercadona", markers: [/MERCADONA\s+S\.A\./i] },
+  {
+    name: "miller",
+    markers: [/LENCAR\s+CANARIAS/i, /POL\.IN\.\s*MILLER/i],
+  },
+  {
+    name: "empark",
+    markers: [/EMPARK\s+APARCAMIENTOS/i, /PARQUE\s+D[AÁ]RSENA/i],
+  },
+  {
+    name: "acastimar",
+    markers: [/ACASTIMAR,\s*S\.L\./i, /FACTURA\s+VENTA\b/i],
+  },
+];
+
+export function detectVendor(text) {
+  const input = typeof text === "string" ? text : "";
+  for (const entry of VENDOR_MARKERS) {
+    if (entry.markers.some((re) => re.test(input))) return entry.name;
+  }
+  return null;
+}
+
+function toIsoDate(value) {
+  if (!value) return null;
+  const trimmed = String(value).trim();
+  // YYYY-MM-DD
+  let m = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  // DD/MM/YYYY
+  m = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  // DD-MM-YYYY
+  m = trimmed.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return null;
+}
+
+function parseAmount(value) {
+  if (value == null) return null;
+  const cleaned = String(value).replace(/[^\d,.]/g, "");
+  if (!cleaned) return null;
+  // "1.298,05" (es-ES thousands) -> "1298.05"; "131,59" -> "131.59"; "12.00" stays.
+  if (cleaned.includes(",") && cleaned.includes(".")) {
+    return cleaned.replace(/\./g, "").replace(",", ".");
+  }
+  return cleaned.replace(",", ".");
+}
+
+// --- MILLER (Lencar Canarias) ---
+// Header "Fecha de factura: 01/08/2026", number "F2939/26" (Refª. column),
+// totals table "Base imponible | Importe IGIC | Total Factura" followed by
+// "131,59 9,21 140,80".
+const MILLER_NUMBER_RE = /\b(F\d{3,4}\/\d{2})\b/i;
+const MILLER_DATE_RE = /Fecha\s+de\s+factura:\s*(\d{2}\/\d{2}\/\d{4})/i;
+const MILLER_TOTALS_RE =
+  /Base\s+imponible\s+Importe\s+IGIC\s+Total\s+Factura\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/i;
+
+function parseMiller(text) {
+  const fields = {};
+  const number = text.match(MILLER_NUMBER_RE)?.[1] ?? null;
+  if (number) fields.invoiceNumber = number;
+  const date = toIsoDate(text.match(MILLER_DATE_RE)?.[1] ?? null);
+  if (date) fields.invoiceDate = date;
+  const totals = text.match(MILLER_TOTALS_RE);
+  if (totals) {
+    fields.totals = {
+      subtotal: parseAmount(totals[1]),
+      tax: parseAmount(totals[2]),
+      total: parseAmount(totals[3]),
+    };
+  }
+  fields.taxLabel = /\bIGIC\b/i.test(text) ? "IGIC" : /\bIVA\b/i.test(text) ? "IVA" : null;
+  return { fields, vendor: "miller" };
+}
+
+// --- EMPARK ---
+// "FACTURA Nº L2026S5151/10105", "Fecha de Emisión 2026-08-01",
+// "TOTAL Líquido 11,21 € TOTAL IGIC 0,79 € TOTAL 12,00 €".
+const EMPARK_NUMBER_RE = /FACTURA\s+N[ºo]\s+([A-Z0-9\/]+)/i;
+const EMPARK_DATE_RE = /Fecha\s+de\s+Emisi[oó]n[\s\S]{0,150}?(\d{4}-\d{2}-\d{2})/i;
+const EMPARK_TOTALS_RE =
+  /TOTAL\s+L[ií]quido\s+([\d.,]+)\s*€\s+TOTAL\s+IGIC\s+([\d.,]+)\s*€\s+TOTAL\s+([\d.,]+)\s*€/i;
+
+function parseEmpark(text) {
+  const fields = {};
+  const number = text.match(EMPARK_NUMBER_RE)?.[1] ?? null;
+  if (number) fields.invoiceNumber = number;
+  const date = toIsoDate(text.match(EMPARK_DATE_RE)?.[1] ?? null);
+  if (date) fields.invoiceDate = date;
+  const totals = text.match(EMPARK_TOTALS_RE);
+  if (totals) {
+    fields.totals = {
+      subtotal: parseAmount(totals[1]),
+      tax: parseAmount(totals[2]),
+      total: parseAmount(totals[3]),
+    };
+  }
+  fields.taxLabel = /\bIGIC\b/i.test(text) ? "IGIC" : /\bIVA\b/i.test(text) ? "IVA" : null;
+  return { fields, vendor: "empark" };
+}
+
+// --- ACASTIMAR ---
+// "FACTURA VENTA 26-722", "Fecha operación: 04-06-2026",
+// "Importe neto BaseIVA 1.298,05 1.298,05" and "Importe Factura(EUR): 1.298,05".
+const ACASTIMAR_NUMBER_RE = /FACTURA\s+VENTA\s+(\d{2,4}-\d{2,4})/i;
+const ACASTIMAR_DATE_RE = /Fecha\s+operaci[oó]n:\s*(\d{2}-\d{2}-\d{4})/i;
+const ACASTIMAR_TOTALS_RE = /Importe\s+neto\s+BaseIVA\s+([\d.,]+)\s+([\d.,]+)/i;
+const ACASTIMAR_TOTAL_RE = /Importe\s+Factura\(EUR\):\s*([\d.,]+)/i;
+
+function parseAcastimar(text) {
+  const fields = {};
+  const number = text.match(ACASTIMAR_NUMBER_RE)?.[1] ?? null;
+  if (number) fields.invoiceNumber = number;
+  const date = toIsoDate(text.match(ACASTIMAR_DATE_RE)?.[1] ?? null);
+  if (date) fields.invoiceDate = date;
+  const totals = text.match(ACASTIMAR_TOTALS_RE);
+  if (totals) {
+    fields.totals = {
+      subtotal: parseAmount(totals[1]),
+      tax: null,
+      total: parseAmount(totals[2]),
+    };
+  } else {
+    const totalOnly = text.match(ACASTIMAR_TOTAL_RE);
+    if (totalOnly) {
+      fields.totals = {
+        subtotal: null,
+        tax: null,
+        total: parseAmount(totalOnly[1]),
+      };
+    }
+  }
+  fields.taxLabel = /\bIGIC\b/i.test(text) ? "IGIC" : /\bIVA\b/i.test(text) ? "IVA" : null;
+  return { fields, vendor: "acastimar" };
+}
+
+const PARSERS = {
+  miller: parseMiller,
+  empark: parseEmpark,
+  acastimar: parseAcastimar,
+};
+
+// Parse with the vendor-specific extractor. Returns null when the vendor is
+// unknown. The result mirrors the extractInvoiceFields() shape so callers can
+// merge it: non-null vendor fields override the generic base.
+export function parseVendorInvoice(text) {
+  const vendor = detectVendor(text);
+  if (!vendor) return null;
+  const parser = PARSERS[vendor];
+  if (!parser) return null;
+  return parser(typeof text === "string" ? text : "");
+}
+
+export const _internal = { toIsoDate, parseAmount };
