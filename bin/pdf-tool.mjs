@@ -159,6 +159,41 @@ const ENV_PATH = path.join(ROOT, ".env");
       return trimmed; // escribió el nombre exacto directamente
     }
 
+    // Formatos de renombrado preestablecidos, con ejemplo real para que un
+    // usuario no-técnico elija con números sin saber la sintaxis de {variables}.
+    const PATTERN_PRESETS = [
+      { pattern: "{fecha}_{proveedor}_{palabra}", example: "2026-08-01_miller_box.pdf" },
+      { pattern: "{fecha}_{proveedor}", example: "2026-08-01_miller.pdf" },
+      { pattern: "{fecha}", example: "2026-08-01.pdf" },
+      { pattern: "{proveedor}_{fecha}", example: "miller_2026-08-01.pdf" },
+      { pattern: "{proveedor}", example: "miller.pdf" },
+      { pattern: "{numero}_{fecha}", example: "F2939-26_2026-08-01.pdf" },
+      { pattern: "{fecha}_{numero}", example: "2026-08-01_F2939-26.pdf" },
+      { pattern: "{palabra}_{proveedor}_{fecha}", example: "box_miller_2026-08-01.pdf" },
+    ];
+
+    // Elegí formato de renombrado: presets numerados + "otro" para escribir el propio.
+    async function pickPattern(currentPattern) {
+      const def = currentPattern || PATTERN_PRESETS[0].pattern;
+      console.log("");
+      console.log(t("pattern_pick"));
+      PATTERN_PRESETS.forEach((p, i) => {
+        const mark = p.pattern === def ? `  (${t("pattern_current")})` : "";
+        console.log(`  [${i + 1}] ${p.pattern} → ${p.example}${mark}`);
+      });
+      console.log(`  [${PATTERN_PRESETS.length + 1}] ${t("pattern_other")}`);
+      const answer = await prompt(t("pattern_prompt"));
+      const trimmed = answer.trim();
+      if (!trimmed) return def;
+      const idx = Number.parseInt(trimmed, 10) - 1;
+      if (idx >= 0 && idx < PATTERN_PRESETS.length) return PATTERN_PRESETS[idx].pattern;
+      if (Number.parseInt(trimmed, 10) === PATTERN_PRESETS.length + 1) {
+        const custom = await prompt(t("ask_pattern", { default: def }));
+        return custom.trim() || def;
+      }
+      return trimmed; // escribió el patrón directamente
+    }
+
     async function runConfig(args) {
   const setIdx = args.indexOf("--set");
   if (setIdx >= 0) {
@@ -234,9 +269,7 @@ const ENV_PATH = path.join(ROOT, ".env");
   const wantRename = await prompt(t("ask_rename"));
   if (/^s/i.test(wantRename)) {
     const current2 = readEnv();
-    const pattern = await prompt(
-      t("ask_pattern", { default: current2.PDF_NAME_PATTERN || "{fecha}_{proveedor}_{palabra}" }),
-    );
+    const pattern = await pickPattern(current2.PDF_NAME_PATTERN || "{fecha}_{proveedor}_{palabra}");
     const merged2 = {
       ...readEnv(),
       PDF_NAME_PATTERN: pattern || current2.PDF_NAME_PATTERN || "{fecha}_{proveedor}_{palabra}",
