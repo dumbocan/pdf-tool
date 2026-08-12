@@ -279,6 +279,7 @@ $("procesar").addEventListener("click", async () => {
     const row = sinCubrir[0];
     const pdf = pdfs.find((p) => p.name === row.file);
     if (!pdf) { alert("No encuentro el archivo para generar el parser."); return; }
+    const textoOriginal = genBtn.textContent;
     genBtn.disabled = true;
     genBtn.textContent = "✨ Generando parser con IA...";
     try {
@@ -297,6 +298,7 @@ $("procesar").addEventListener("click", async () => {
       alert("Error al generar: " + err.message);
     } finally {
       genBtn.disabled = false;
+      genBtn.textContent = textoOriginal;
     }
   };
 
