@@ -384,10 +384,25 @@ async function main() {
     await runConfig(rest);
     return;
   }
-  if (command === "version" || command === "--version" || command === "-v") {
-    console.log("pdf-tool v" + VERSION);
-    return;
-  }
+      if (command === "version" || command === "--version" || command === "-v") {
+        console.log("pdf-tool v" + VERSION);
+        return;
+      }
+      if (command === "web" || command === "ventana") {
+        // Levanta la web local y abre el navegador (interfaz para no-técnicos).
+        const { spawn } = await import("node:child_process");
+        console.log("📄 Abriendo pdf-tool en tu navegador (http://127.0.0.1:3000)...");
+        const server = spawn(process.execPath, [path.join(ROOT, "src", "server.js")], { stdio: "inherit" });
+        await new Promise((r) => setTimeout(r, 900));
+        const url = "http://127.0.0.1:3000/";
+        try {
+          if (process.platform === "darwin") spawn("open", [url], { stdio: "ignore" });
+          else if (process.platform === "win32") spawn("cmd", ["/c", "start", url], { stdio: "ignore" });
+          else spawn("xdg-open", [url], { stdio: "ignore" });
+        } catch { /* sin navegador gráfico */ }
+        await new Promise((resolve) => server.on("close", resolve));
+        return;
+      }
   if (command === "ayuda" || command === "help" || command === "-h" || command === "--help" || !command) {
     console.log(t("help_title") + t("help_usage") + t("help_scan") + t("help_scan_direct") + t("help_scan_rename") + t("help_config") + t("help_out") + t("help_help"));
     return;

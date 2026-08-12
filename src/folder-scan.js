@@ -57,79 +57,97 @@ export async function scanFolder(folder, { useOcr = false, useLlm = false, onPro
   const rows = [];
   for (const file of files) {
     if (onProgress) onProgress(file, files.length);
-    const pdfPath = path.join(folder, file);
-    let extracted;
-    let buffer;
-    try {
-      buffer = await readFile(pdfPath);
-      extracted = await extractTextFromPdf(buffer, { maxChars: 20000, maxPages: 100 });
-    } catch (error) {
-      rows.push({ file, error: error.message, text: "" });
-      continue;
-    }
-    let text = extracted.text ?? "";
-    if ((!text || !text.trim()) && useOcr) {
-      text = await ocrPdf(pdfPath);
-    }
-    let fields = extracted.invoiceFields ?? {};
-    if (text && (!extracted.text || !extracted.text.trim()) && useOcr) {
-      // OCR text goes through the vendor-aware enrich (generic regex misses
-      // column layouts); the deterministic parsers still fill number/date/totals.
-      fields = enrichInvoiceFields(text);
-    }
-    const vendor = detectVendor(text);
-    let lineItems = vendor ? parseVendorLineItems(text, vendor) : [];
-    let llmFields = null;
-    // With --llm we always ask the LLM: it provides the semantic shortSummary
-    // for renaming, and fills in any missing fields for unknown vendors.
-    if (useLlm && text.trim()) {
-      llmFields = await llmEnrich(text);
-      // LLM only FILLS missing fields — it never overwrites the deterministic
-      // parser output (e.g. the ISO date), which would corrupt the filename date.
-      if (llmFields?.fields?.invoiceNumber && !fields.invoiceNumber) {
-        fields.invoiceNumber = String(llmFields.fields.invoiceNumber);
-        fields.matched = [...(fields.matched ?? []), "invoiceNumber"];
-      }
-      if (llmFields?.fields?.invoiceDate && !fields.invoiceDate) {
-        fields.invoiceDate = String(llmFields.fields.invoiceDate);
-        fields.matched = [...(fields.matched ?? []), "invoiceDate"];
-      }
-      if (llmFields?.fields?.total != null && !fields.totals?.total) {
-        fields.totals = { ...(fields.totals ?? {}), total: String(llmFields.fields.total) };
-        fields.matched = [...(fields.matched ?? []), "total"];
-      }
-      if (Array.isArray(llmFields?.lineItems) && llmFields.lineItems.length > lineItems.length) {
-        lineItems = llmFields.lineItems;
-      }
-    }
-    rows.push({
-      file,
-      keyword: llmFields?.shortSummary || "",
-      vendor,
-      invoiceNumber: fields.invoiceNumber ?? "",
-      invoiceDate: fields.invoiceDate ?? "",
-      subtotal: fields.totals?.subtotal ?? "",
-      tax: fields.totals?.tax ?? "",
-      total: fields.totals?.total ?? "",
-      taxLabel: fields.taxLabel ?? "",
-      matched: (fields.matched ?? []).join("|"),
-      lineItems: lineItems
-        .map((li) =>
-          [li.description ?? "", li.units ?? li.quantity ?? "", li.unit_price_eur ?? li.unitPrice ?? "", li.amount_eur ?? li.amount ?? ""].join(" :: "),
-        )
-        .join(" ; "),
-      // Structured per-article rows for the DB-ingestion script.
-      articles: lineItems.map((li) => ({
-        description: li.description ?? "",
-        units: li.units ?? li.quantity ?? "",
-        unit_price: li.unit_price_eur ?? li.unitPrice ?? "",
-        amount: li.amount_eur ?? li.amount ?? "",
-        tax_rate: li.tax_rate ?? li.taxRate ?? "",
-      })),
-      textChars: text.length,
-    });
+    const buffer = await readFile(path.join(folder, file));
+    rows.push(await processPdfBuffer(buffer, { filename: file, useOcr, useLlm }));
   }
   return rows;
+}
+
+// Pipeline completo por PDF (texto → OCR → parsers de proveedor → LLM).
+// Es el mismo código que usa scanFolder; exportado para que el servidor web
+// procese archivos subidos (base64) con resultados idénticos al CLI.
+export async function processPdfBuffer(buffer, { filename = "documento.pdf", useOcr = false, useLlm = false } = {}) {
+  let extracted;
+  try {
+    extracted = await extractTextFromPdf(buffer, { maxChars: 20000, maxPages: 100 });
+  } catch (error) {
+    return { file: filename, error: error.message, text: "" };
+  }
+  let text = extracted.text ?? "";
+  // OCR necesita un archivo real (pdftoppm/tesseract): escribimos el buffer a tmp.
+  let ocrTemp = null;
+  if ((!text || !text.trim()) && useOcr) {
+    try {
+      const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      ocrTemp = await mkdtemp(path.join(tmpdir(), "pdf-web-"));
+      const pdfPath = path.join(ocrTemp, filename.replace(/[^\w.-]/g, "_"));
+      await writeFile(pdfPath, buffer);
+      text = await ocrPdf(pdfPath);
+    } catch {
+      text = "";
+    }
+  }
+  let fields = extracted.invoiceFields ?? {};
+  if (text && (!extracted.text || !extracted.text.trim()) && useOcr) {
+    // OCR text goes through the vendor-aware enrich (generic regex misses
+    // column layouts); the deterministic parsers still fill number/date/totals.
+    fields = enrichInvoiceFields(text);
+  }
+  const vendor = detectVendor(text);
+  let lineItems = vendor ? parseVendorLineItems(text, vendor) : [];
+  let llmFields = null;
+  // With --llm we always ask the LLM: it provides the semantic shortSummary
+  // for renaming, and fills in any missing fields for unknown vendors.
+  if (useLlm && text.trim()) {
+    llmFields = await llmEnrich(text);
+    // LLM only FILLS missing fields — it never overwrites the deterministic
+    // parser output (e.g. the ISO date), which would corrupt the filename date.
+    if (llmFields?.fields?.invoiceNumber && !fields.invoiceNumber) {
+      fields.invoiceNumber = String(llmFields.fields.invoiceNumber);
+      fields.matched = [...(fields.matched ?? []), "invoiceNumber"];
+    }
+    if (llmFields?.fields?.invoiceDate && !fields.invoiceDate) {
+      fields.invoiceDate = String(llmFields.fields.invoiceDate);
+      fields.matched = [...(fields.matched ?? []), "invoiceDate"];
+    }
+    if (llmFields?.fields?.total != null && !fields.totals?.total) {
+      fields.totals = { ...(fields.totals ?? {}), total: String(llmFields.fields.total) };
+      fields.matched = [...(fields.matched ?? []), "total"];
+    }
+    if (Array.isArray(llmFields?.lineItems) && llmFields.lineItems.length > lineItems.length) {
+      lineItems = llmFields.lineItems;
+    }
+  }
+  if (ocrTemp) {
+    await import("node:fs/promises").then(({ rm }) => rm(ocrTemp, { recursive: true, force: true }).catch(() => {}));
+  }
+  return {
+    file: filename,
+    keyword: llmFields?.shortSummary || "",
+    vendor,
+    invoiceNumber: fields.invoiceNumber ?? "",
+    invoiceDate: fields.invoiceDate ?? "",
+    subtotal: fields.totals?.subtotal ?? "",
+    tax: fields.totals?.tax ?? "",
+    total: fields.totals?.total ?? "",
+    taxLabel: fields.taxLabel ?? "",
+    matched: (fields.matched ?? []).join("|"),
+    lineItems: lineItems
+      .map((li) =>
+        [li.description ?? "", li.units ?? li.quantity ?? "", li.unit_price_eur ?? li.unitPrice ?? "", li.amount_eur ?? li.amount ?? ""].join(" :: "),
+      )
+      .join(" ; "),
+    // Structured per-article rows for the DB-ingestion script and the web UI.
+    articles: lineItems.map((li) => ({
+      description: li.description ?? "",
+      units: li.units ?? li.quantity ?? "",
+      unit_price: li.unit_price_eur ?? li.unitPrice ?? "",
+      amount: li.amount_eur ?? li.amount ?? "",
+      tax_rate: li.tax_rate ?? li.taxRate ?? "",
+    })),
+    textChars: text.length,
+  };
 }
 
 const LLM_SYSTEM_PROMPT =

@@ -102,6 +102,14 @@ Agregá `--ocr` y el programa las lee igual:
 pdf-tool facturas C:\Mis Documentos\Facturas --ocr
 ```
 
+### ¿No te gustan los comandos? Usá la ventana web
+
+```bash
+pdf-tool web
+```
+
+Se abre una página en tu navegador (todo queda en tu computadora): elegís la carpeta con el **mouse**, tocás **Procesar**, y ves las facturas en una tabla con botón para **descargar facturas.csv**. Ideal para los que no quieren tocar una terminal — y el instalador te la ofrece al final.
+
 ---
 
 ## ✨ Lo que hace

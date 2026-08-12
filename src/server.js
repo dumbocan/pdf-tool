@@ -13,6 +13,7 @@
 import { envWithFile } from "./env.js";
 import { providerById } from "./providers.js";
     import { createMcpFacade } from "./mcp-facade.js";
+    import { processPdfBuffer } from "./folder-scan.js";
 
 const VERSION = (() => {
   try {
@@ -339,10 +340,23 @@ export function createServer({
       response.end("ok");
       return;
     }
-    if (request.method === "GET" && url.pathname === "/version") {
-      jsonResponse(response, 200, { name: "pdf-tool", version: VERSION }, maxResponseBytes);
-      return;
-    }
+        if (request.method === "GET" && url.pathname === "/version") {
+          jsonResponse(response, 200, { name: "pdf-tool", version: VERSION, llmConfigured: Boolean(llmApiKey) }, maxResponseBytes);
+          return;
+        }
+        // Página web local (interfaz para no-técnicos). Sin auth: es la UI de
+        // escritorio; /process pide auth solo si AUTH_TOKEN está configurado.
+        if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app")) {
+          try {
+            const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+            response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+            response.end(html);
+          } catch {
+            response.writeHead(404);
+            response.end();
+          }
+          return;
+        }
     // Everything below (including /mcp) requires auth when AUTH_TOKEN is set.
     if (!hasValidToken(request, authToken)) {
       errorResponse(response, 401, "unauthorized", maxResponseBytes);
@@ -352,26 +366,37 @@ export function createServer({
       await getMcpFacade().handleMcpRequest(request, response);
       return;
     }
-    if (request.method !== "POST" || !["/extract", "/extract-with-llm"].includes(url.pathname)) {
-      response.writeHead(404);
-      response.end();
-      return;
-    }
+        if (request.method !== "POST" || !["/extract", "/extract-with-llm", "/process"].includes(url.pathname)) {
+          response.writeHead(404);
+          response.end();
+          return;
+        }
 
-    try {
-      const rawBody = await readBody(request, maxRequestBytes);
-      let input;
-      try {
-        input = JSON.parse(rawBody);
-      } catch {
-        errorResponse(response, 400, "request body must be valid JSON", maxResponseBytes);
-        return;
-      }
-      const isLlmRequest = url.pathname === "/extract-with-llm";
-      validateInput(input, { includeLlmFields: isLlmRequest });
-      if (isLlmRequest && !llmApiKey) throw requestError("LLM service is not configured", 503);
-      const buffer = decodeBase64(input.data);
-      const extracted = await extract(buffer, {
+        try {
+          const rawBody = await readBody(request, maxRequestBytes);
+          let input;
+          try {
+            input = JSON.parse(rawBody);
+          } catch {
+            errorResponse(response, 400, "request body must be valid JSON", maxResponseBytes);
+            return;
+          }
+          const isLlmRequest = url.pathname === "/extract-with-llm";
+          validateInput(input, { includeLlmFields: isLlmRequest });
+          if (isLlmRequest && !llmApiKey) throw requestError("LLM service is not configured", 503);
+          const buffer = decodeBase64(input.data);
+          if (url.pathname === "/process") {
+            // Pipeline completo por archivo (mismo resultado que el CLI): texto →
+            // OCR → parsers de proveedor → LLM (solo si hay clave configurada).
+            const row = await processPdfBuffer(buffer, {
+              filename: typeof input.filename === "string" ? input.filename : "documento.pdf",
+              useOcr: input.ocr === true,
+              useLlm: input.llm === true && Boolean(llmApiKey),
+            });
+            jsonResponse(response, 200, { row }, maxResponseBytes);
+            return;
+          }
+          const extracted = await extract(buffer, {
         maxChars: input.maxChars,
         maxPages: input.maxPages,
         signal: request.signal,

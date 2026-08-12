@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>📄 pdf-tool — tus facturas en orden</title>
+<style>
+  :root { --azul:#2563eb; --verde:#16a34a; --rojo:#dc2626; --gris:#6b7280; --fondo:#f8fafc; --borde:#e2e8f0; }
+  * { box-sizing:border-box; }
+  body { font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:var(--fondo); color:#1e293b; margin:0; padding:24px; }
+  .caja { max-width:980px; margin:0 auto; }
+  h1 { font-size:26px; margin:0 0 4px; }
+  .sub { color:var(--gris); margin:0 0 24px; font-size:15px; }
+  .panel { background:#fff; border:1px solid var(--borde); border-radius:12px; padding:20px; margin-bottom:16px; }
+  .paso { font-size:13px; font-weight:600; color:var(--azul); text-transform:uppercase; letter-spacing:.04em; margin:0 0 8px; }
+  .boton { background:var(--azul); color:#fff; border:0; border-radius:8px; padding:12px 18px; font-size:15px; font-weight:600; cursor:pointer; }
+  .boton:hover { filter:brightness(1.08); }
+  .boton:disabled { background:#94a3b8; cursor:default; }
+  .boton.sec { background:#fff; color:var(--azul); border:1px solid var(--azul); }
+  .boton.verde { background:var(--verde); }
+  label.opcion { display:block; margin:10px 0; font-size:15px; cursor:pointer; }
+  input[type=checkbox] { width:17px; height:17px; margin-right:8px; vertical-align:-3px; }
+  #pdfCount { color:var(--gris); font-size:14px; margin:8px 0 0; }
+  .progreso { margin:12px 0; color:var(--gris); font-size:14px; }
+  .resumen { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px 16px; margin:12px 0; font-size:14px; }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th { text-align:left; background:#f1f5f9; padding:8px 10px; border-bottom:2px solid var(--borde); }
+  td { padding:8px 10px; border-bottom:1px solid var(--borde); vertical-align:top; }
+  tr.erro { background:#fef2f2; color:var(--rojo); }
+  .archivo { font-weight:600; }
+  .oculto { display:none; }
+  .aviso { background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 14px; font-size:14px; margin:10px 0; }
+  #claveBox { margin-top:12px; }
+  #claveBox input { padding:8px 10px; border:1px solid var(--borde); border-radius:6px; width:280px; font-size:14px; }
+  footer { color:var(--gris); font-size:12px; text-align:center; margin-top:24px; }
+</style>
+</head>
+<body>
+<div class="caja">
+  <h1>📄 pdf-tool</h1>
+  <p class="sub">Tus facturas en PDF → datos ordenados en una tabla. Sin saber nada de informática.</p>
+
+  <div class="panel">
+    <p class="paso">Paso 1 — Elegí tu carpeta</p>
+    <button class="boton" id="elegir">Elegí la carpeta con tus facturas</button>
+    <input type="file" id="carpeta" webkitdirectory directory multiple class="oculto">
+    <p id="pdfCount"></p>
+    <div class="oculto" id="opciones">
+      <label class="opcion"><input type="checkbox" id="ocr"> Son fotos o escaneos de papel (los leo con OCR)</label>
+      <label class="opcion" id="llmLabel"><input type="checkbox" id="llm"> Usar IA para las facturas desconocidas</label>
+      <button class="boton verde" id="procesar">Procesar facturas</button>
+      <div class="progreso" id="progreso"></div>
+    </div>
+    <div class="aviso oculto" id="claveBox">La instalación tiene una clave de acceso. Escribila acá (se guarda en este navegador):<br>
+      <input type="password" id="clave" placeholder="Clave de acceso">
+    </div>
+  </div>
+
+  <div class="panel oculto" id="resultado">
+    <p class="paso">Paso 2 — Resultado</p>
+    <div class="resumen" id="resumen"></div>
+    <button class="boton sec" id="descargar">⬇️ Descargar facturas.csv</button>
+    <div style="overflow-x:auto; margin-top:12px;">
+      <table id="tabla">
+        <thead><tr>
+          <th>Archivo</th><th>Proveedor</th><th>Número</th><th>Fecha</th>
+          <th>Subtotal</th><th>Impuesto</th><th>Total</th><th>Artículos</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>Todo se procesa en tu computadora. Tus PDFs no salen de acá (salvo que actives la IA).</footer>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let pdfs = [];
+let token = localStorage.getItem("pdfToolToken") || "";
+
+$("elegir").addEventListener("click", () => $("carpeta").click());
+$("carpeta").addEventListener("change", (e) => {
+  pdfs = [...e.target.files].filter((f) => /\.pdf$/i.test(f.name));
+  $("pdfCount").textContent = pdfs.length
+    ? `✅ Encontré ${pdfs.length} factura${pdfs.length === 1 ? "" : "s"} en esa carpeta.`
+    : "No encontré archivos PDF en esa carpeta.";
+  $("opciones").classList.toggle("oculto", pdfs.length === 0);
+  $("resultado").classList.add("oculto");
+  $("tabla").querySelector("tbody").innerHTML = "";
+});
+
+// ¿La instalación tiene IA configurada? (para mostrar el checkbox)
+fetch("/version").then((r) => r.json()).then((v) => {
+  if (v.llmConfigured) $("llmLabel").classList.remove("oculto");
+  else $("llmLabel").classList.add("oculto");
+}).catch(() => {});
+
+$("clave").addEventListener("input", () => {
+  token = $("clave").value.trim();
+  localStorage.setItem("pdfToolToken", token);
+});
+
+async function procesarUno(file) {
+  const dataUrl = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = reject;
+    fr.readAsDataURL(file);
+  });
+  const body = {
+    data: dataUrl.split(",")[1],
+    filename: file.name,
+    ocr: $("ocr").checked,
+    llm: $("llm").checked,
+  };
+  const headers = { "content-type": "application/json" };
+  if (token) headers.authorization = "Bearer " + token;
+  const res = await fetch("/process", { method: "POST", headers, body: JSON.stringify(body) });
+  if (res.status === 401) {
+    $("claveBox").classList.remove("oculto");
+    throw new Error("necesita clave de acceso");
+  }
+  if (!res.ok) throw new Error("error " + res.status);
+  return (await res.json()).row;
+}
+
+function csvCell(v) {
+  let s = v == null ? "" : String(v);
+  if (/^[=+\-@]/.test(s)) s = "'" + s;
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function filaCsv(row, art) {
+  return [row.file, row.vendor || "", row.invoiceNumber || "", row.invoiceDate || "",
+    row.subtotal || "", row.tax || "", row.total || "", row.taxLabel || "",
+    art ? art.description : "", art ? art.units : "", art ? art.unit_price : "", art ? art.amount : "",
+    art && art.tax_rate != null ? art.tax_rate : ""].map(csvCell).join(",");
+}
+
+function esc(s) { return s == null ? "" : String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
+
+$("procesar").addEventListener("click", async () => {
+  const btn = $("procesar");
+  btn.disabled = true;
+  $("tabla").querySelector("tbody").innerHTML = "";
+  const tbody = $("tabla").querySelector("tbody");
+  const rows = [];
+  for (let i = 0; i < pdfs.length; i++) {
+    $("progreso").textContent = `Procesando ${i + 1}/${pdfs.length}: ${pdfs[i].name} ...`;
+    try {
+      const row = await procesarUno(pdfs[i]);
+      rows.push(row);
+      const tr = document.createElement("tr");
+      const articulos = Array.isArray(row.articles) && row.articles.length
+        ? row.articles.map((a) => esc(a.description)).join(" · ")
+        : esc(row.lineItems || "");
+      tr.innerHTML = `<td class="archivo">${esc(row.file)}</td><td>${esc(row.vendor)}</td>` +
+        `<td>${esc(row.invoiceNumber)}</td><td>${esc(row.invoiceDate)}</td>` +
+        `<td>${esc(row.subtotal)}</td><td>${esc(row.tax)}</td><td><b>${esc(row.total)}</b></td>` +
+        `<td>${articulos}</td>`;
+      if (row.error) tr.classList.add("erro");
+      tbody.appendChild(tr);
+    } catch (err) {
+      rows.push({ file: pdfs[i].name, error: err.message });
+      const tr = document.createElement("tr");
+      tr.className = "erro";
+      tr.innerHTML = `<td class="archivo">${esc(pdfs[i].name)}</td><td colspan="7">⚠ ${esc(err.message)}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+  $("progreso").textContent = "";
+  const conDatos = rows.filter((r) => r.vendor || r.invoiceNumber || r.total);
+  const proveedores = [...new Set(rows.map((r) => r.vendor).filter(Boolean))];
+  $("resumen").textContent = `✅ Listo. Facturas procesadas: ${rows.length} · Con datos extraídos: ${conDatos.length}` +
+    (proveedores.length ? ` · Proveedores detectados: ${proveedores.join(", ")}` : "");
+  $("resultado").classList.remove("oculto");
+  btn.disabled = false;
+
+  $("descargar").onclick = () => {
+    const header = "archivo,proveedor,numero_factura,fecha,subtotal,impuesto,total,impuesto_label,articulo,cantidad,precio_unitario,importe_articulo,impuesto_articulo";
+    const lineas = [header];
+    for (const row of rows) {
+      const arts = (Array.isArray(row.articles) && row.articles.length ? row.articles : [null]);
+      for (const art of arts) lineas.push(filaCsv(row, art));
+    }
+    const blob = new Blob(["\uFEFF" + lineas.join("\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "facturas.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+});
+</script>
+</body>
+</html>

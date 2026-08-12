@@ -17,14 +17,37 @@ async function withServer(options, fn) {
 }
 
 test("health and version are unauthenticated and return the contract", async () => {
-  await withServer({ authToken: "secret" }, async (baseUrl) => {
+  await withServer({ authToken: "secret", llmApiKey: "" }, async (baseUrl) => {
     const health = await fetch(`${baseUrl}/healthz`);
     assert.equal(health.status, 200);
     assert.equal(await health.text(), "ok");
 
     const version = await fetch(`${baseUrl}/version`);
     assert.equal(version.status, 200);
-      assert.deepEqual(await version.json(), { name: "pdf-tool", version: "0.2.0" });
+      assert.deepEqual(await version.json(), { name: "pdf-tool", version: "0.2.0", llmConfigured: false });
+  });
+});
+
+test("GET / serves the web UI", async () => {
+  await withServer({}, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/`);
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /pdf-tool/);
+  });
+});
+
+test("process runs the full pipeline and returns a row", async () => {
+  await withServer({}, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/process`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ data: Buffer.from("not-a-pdf").toString("base64"), filename: "factura.pdf", ocr: false, llm: false }),
+    });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.row.file, "factura.pdf");
+    assert.ok(result.row.error, "invalid PDF should surface an error, not crash");
   });
 });
 

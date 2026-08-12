@@ -193,6 +193,22 @@ esac
           echo "➜ Para leer facturas desconocidas con IA, configurá tu proveedor:"
           echo "    pdf-tool config"
         fi
+        # 6. Ventana web (interfaz gráfica para no-técnicos)
+        if [ -t 0 ]; then
+          echo ""
+          echo "➜ ¿Querés abrir la ventana web de pdf-tool ahora (elegís la carpeta con el mouse)? (s/N)"
+          read -r WANT_WEB || WANT_WEB=n
+          if [ "${WANT_WEB:-n}" = "s" ] || [ "${WANT_WEB:-n}" = "S" ] || [ "${WANT_WEB:-n}" = "y" ] || [ "${WANT_WEB:-n}" = "Y" ]; then
+            "$BIN_DIR/pdf-tool" web
+          fi
+        elif [ -r /dev/tty ]; then
+          echo ""
+          echo "➜ ¿Querés abrir la ventana web de pdf-tool ahora (elegís la carpeta con el mouse)? (s/N)"
+          read -r WANT_WEB < /dev/tty || WANT_WEB=n
+          if [ "${WANT_WEB:-n}" = "s" ] || [ "${WANT_WEB:-n}" = "S" ] || [ "${WANT_WEB:-n}" = "y" ] || [ "${WANT_WEB:-n}" = "Y" ]; then
+            "$BIN_DIR/pdf-tool" web < /dev/tty
+          fi
+        fi
         echo ""
     echo "Si el comando no aparece, abrí una terminal nueva."
     echo "=============================================="
