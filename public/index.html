@@ -287,14 +287,25 @@ $("procesar").addEventListener("click", async () => {
       alert("Para renombrar necesitás Chrome o Edge: volvé a \"Elegí la carpeta\" y aceptá el permiso que pide el navegador.");
       return;
     }
+    // Nombres ocupados: los actuales de la carpeta + los que vayamos usando.
+    // Nunca sobrescribir un archivo: ante colisión agregamos -1, -2 (como el CLI).
+    const ocupados = new Set();
+    for await (const [nombre] of dirHandles.entries()) ocupados.add(nombre.toLowerCase());
     let ok = 0, fails = 0, ya = 0;
     for (const row of ultimasRows) {
       if (row.error || !row.newName) continue;
       const pdf = pdfs.find((p) => p.name === row.file);
       if (!pdf || !pdf.handle) continue;
-      if (pdf.name.toLowerCase() === row.newName.toLowerCase()) { ya += 1; continue; }
+      let nombre = row.newName;
+      if (pdf.name.toLowerCase() === nombre.toLowerCase()) { ya += 1; ocupados.add(nombre.toLowerCase()); continue; }
+      if (ocupados.has(nombre.toLowerCase())) {
+        const base = nombre.replace(/\.pdf$/i, "");
+        let n = 1;
+        do { nombre = `${base}-${n}.pdf`; n += 1; } while (ocupados.has(nombre.toLowerCase()));
+      }
       try {
-        await pdf.handle.move(row.newName);
+        await pdf.handle.move(nombre);
+        ocupados.add(nombre.toLowerCase());
         ok += 1;
       } catch { fails += 1; }
     }
