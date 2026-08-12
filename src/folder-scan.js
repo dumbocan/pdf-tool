@@ -161,7 +161,7 @@ export async function processPdfBuffer(buffer, { filename = "documento.pdf", use
     matched: (fields.matched ?? []).join("|"),
     lineItems: lineItems
       .map((li) =>
-        [li.description ?? "", li.units ?? li.quantity ?? "", li.unit_price_eur ?? li.unitPrice ?? "", li.amount_eur ?? li.amount ?? ""].join(" :: "),
+        [li.description ?? "", li.units ?? li.quantity ?? "", li.unit_price_eur ?? li.unitPrice ?? "", li.amount_eur ?? li.amount ?? li.total_eur ?? ""].join(" :: "),
       )
       .join(" ; "),
     // Structured per-article rows for the DB-ingestion script and the web UI.
@@ -169,7 +169,7 @@ export async function processPdfBuffer(buffer, { filename = "documento.pdf", use
       description: li.description ?? "",
       units: li.units ?? li.quantity ?? "",
       unit_price: li.unit_price_eur ?? li.unitPrice ?? "",
-      amount: li.amount_eur ?? li.amount ?? "",
+      amount: li.amount_eur ?? li.amount ?? li.total_eur ?? "",
       tax_rate: li.tax_rate ?? li.taxRate ?? "",
     })),
         textChars: text.length,

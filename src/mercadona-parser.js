@@ -9,7 +9,9 @@
 // match whose desc is a header/footer fragment.
 
 const NUM = String.raw`[0-9]+,[0-9]{4}`;
-const TAX = String.raw`[A-Z][A-Z0-9 ()\.%]{0,8}`;
+// Código de impuesto: "EX" (IGIC exento) o porcentaje "21%" (IVA) — según el
+// layout de la factura (A-G2026 usa IGIC, A-V2026 usa IVA con %).
+const TAX = String.raw`(?:[A-Z][A-Z0-9 ()\.%]{0,8}|\d{1,2}%)`;
 
 // 7 columns: desc (mixed-case phrase, single line), units, unit_price,
 // base, tax, tax_amount, total. We restrict desc to non-newline whitespace
@@ -85,6 +87,8 @@ function extractItemRegion(rawText) {
   const startCandidates = [
     "Descripci\u00f3n Unid. P.Unitario B.Imp. IGIC Cuota IGIC Importe",
     "Descripci\u00f3n  Unid.  P.Unitario  B.Imp.  IGIC  Cuota  IGIC  Importe",
+    "Descripci\u00f3n Unid. P.Unitario B.Imp. IVA Cuota IVA Importe",
+    "Descripci\u00f3n  Unid.  P.Unitario  B.Imp.  IVA  Cuota  IVA  Importe",
     "Descripci\u00f3n Unid. P.Unitario",
   ];
   for (const marker of startCandidates) {
