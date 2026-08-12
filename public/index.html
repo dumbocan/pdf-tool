@@ -33,7 +33,26 @@
   /* El input de archivos no puede estar display:none: Firefox/Chrome no abren
      el selector con click() si el elemento no es visible. Lo ocultamos con
      opacity/absolute (técnica clásica) para que el clic del botón funcione. */
-  input[type=file]#carpeta { position:absolute; opacity:0; width:1px; height:1px; pointer-events:none; }
+  input[type=file]#carpeta { position:absolute; left:-9999px; opacity:0; width:1px; height:1px; pointer-events:none; }
+
+  /* ── Tema oscuro ── */
+  body.oscuro { --fondo:#0f172a; --borde:#1e293b; color:#e2e8f0; }
+  body.oscuro .panel { background:#1e293b; }
+  body.oscuro th { background:#334155; }
+  body.oscuro td { border-color:#334155; }
+  body.oscuro .resumen { background:#052e16; border-color:#166534; }
+  body.oscuro .aviso { background:#422006; border-color:#92400e; }
+  body.oscuro tr.erro { background:#450a0a; }
+  body.oscuro .boton.sec { background:#1e293b; }
+  body.oscuro .progreso { color:#94a3b8; }
+  .tema { position:absolute; top:20px; right:24px; font-size:22px; background:none; border:0; cursor:pointer; padding:6px; border-radius:8px; }
+  .tema:hover { background:rgba(100,116,139,.15); }
+
+  /* ── Progreso: spinner + barra ── */
+  .spinner { width:18px; height:18px; border:3px solid var(--borde); border-top-color:var(--azul); border-radius:50%; display:inline-block; vertical-align:-4px; margin-right:8px; animation:girar .8s linear infinite; }
+  @keyframes girar { to { transform:rotate(360deg); } }
+  .barra { width:100%; height:10px; background:var(--borde); border-radius:6px; overflow:hidden; margin:10px 0 6px; }
+  .barra > div { height:100%; width:0%; background:var(--verde); transition:width .2s; }
   .aviso { background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 14px; font-size:14px; margin:10px 0; }
   #claveBox { margin-top:12px; }
   #claveBox input { padding:8px 10px; border:1px solid var(--borde); border-radius:6px; width:280px; font-size:14px; }
@@ -42,6 +61,7 @@
 </head>
 <body>
 <div class="caja">
+  <button class="tema" id="tema" title="Cambiar tema">🌙</button>
   <h1>📄 pdf-tool</h1>
   <p class="sub">Tus facturas en PDF → datos ordenados en una tabla. Sin saber nada de informática.</p>
 
@@ -53,8 +73,11 @@
     <div class="oculto" id="opciones">
       <label class="opcion"><input type="checkbox" id="ocr"> Son fotos o escaneos de papel (los leo con OCR)</label>
       <label class="opcion" id="llmLabel"><input type="checkbox" id="llm"> Usar IA para las facturas desconocidas</label>
-      <button class="boton verde" id="procesar">Procesar facturas</button>
-      <div class="progreso" id="progreso"></div>
+          <button class="boton verde" id="procesar">Procesar facturas</button>
+          <div class="progreso oculto" id="progreso">
+            <div class="barra"><div id="barraFill"></div></div>
+            <span class="spinner" id="spinner"></span><span id="progresoTexto"></span>
+          </div>
     </div>
     <div class="aviso oculto" id="claveBox">La instalación tiene una clave de acceso. Escribila acá (se guarda en este navegador):<br>
       <input type="password" id="clave" placeholder="Clave de acceso">
@@ -176,14 +199,28 @@ function filaCsv(row, art) {
 
 function esc(s) { return s == null ? "" : String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
 
+// Tema oscuro/claro (se recuerda en este navegador)
+function aplicarTema(t) {
+  document.body.classList.toggle("oscuro", t === "oscuro");
+  $("tema").textContent = t === "oscuro" ? "☀️" : "🌙";
+}
+$("tema").addEventListener("click", () => {
+  const nuevo = document.body.classList.contains("oscuro") ? "claro" : "oscuro";
+  localStorage.setItem("pdfToolTema", nuevo);
+  aplicarTema(nuevo);
+});
+aplicarTema(localStorage.getItem("pdfToolTema") || "claro");
+
 $("procesar").addEventListener("click", async () => {
   const btn = $("procesar");
   btn.disabled = true;
   $("tabla").querySelector("tbody").innerHTML = "";
   const tbody = $("tabla").querySelector("tbody");
   const rows = [];
+  $("progreso").classList.remove("oculto");
   for (let i = 0; i < pdfs.length; i++) {
-    $("progreso").textContent = `Procesando ${i + 1}/${pdfs.length}: ${pdfs[i].name} ...`;
+    $("barraFill").style.width = `${(i / pdfs.length) * 100}%`;
+    $("progresoTexto").textContent = `Procesando ${i + 1}/${pdfs.length}: ${pdfs[i].name} ...`;
     try {
       const row = await procesarUno(pdfs[i].file);
       rows.push(row);
@@ -219,7 +256,7 @@ $("procesar").addEventListener("click", async () => {
           tbody.appendChild(tr);
         }
   }
-  $("progreso").textContent = "";
+  $("progreso").classList.add("oculto");
   const conDatos = rows.filter((r) => r.vendor || r.invoiceNumber || r.total);
   const proveedores = [...new Set(rows.map((r) => r.vendor).filter(Boolean))];
   $("resumen").textContent = `✅ Listo. Facturas procesadas: ${rows.length} · Con datos extraídos: ${conDatos.length}` +
