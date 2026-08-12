@@ -83,7 +83,7 @@ let token = localStorage.getItem("pdfToolToken") || "";
 $("elegir").addEventListener("click", () => $("carpeta").click());
 $("carpeta").addEventListener("change", (e) => {
   pdfs = [...e.target.files].filter((f) => /\.pdf$/i.test(f.name));
-  pdfs.sort((a, b) => a.name.localeCompare(b.name, "es")); // mismo orden que el CLI
+  // Se mantiene el orden de entrada (el de la carpeta), igual que el CLI.
   $("pdfCount").textContent = pdfs.length
     ? `✅ Encontré ${pdfs.length} factura${pdfs.length === 1 ? "" : "s"} en esa carpeta.`
     : "No encontré archivos PDF en esa carpeta.";
