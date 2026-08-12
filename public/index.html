@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
+<link rel="icon" href="data:,">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>📄 pdf-tool — tus facturas en orden</title>
 <style>
@@ -82,9 +83,6 @@
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-let pdfs = [];
-let token = localStorage.getItem("pdfToolToken") || "";
-
 let pdfs = [];
 let dirHandles = null; // solo con showDirectoryPicker (permite renombrar)
 let token = localStorage.getItem("pdfToolToken") || "";
