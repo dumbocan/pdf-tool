@@ -138,7 +138,14 @@ export async function processPdfBuffer(buffer, { filename = "documento.pdf", use
       lineItems = llmFields.lineItems;
     }
   }
-  if (ocrTemp) {
+      // Total de factura: si el parser de campos no lo encontró, lo sumamos de
+      // los artículos (los tickets tabulares no tienen un campo TOTAL parseable).
+      let totalFactura = fields.totals?.total ?? "";
+      if (!totalFactura && lineItems.length) {
+        const sum = lineItems.reduce((acc, li) => acc + parseFloat(li.amount_eur ?? li.amount ?? li.total_eur ?? 0), 0);
+        if (sum > 0) totalFactura = String(Math.round(sum * 100) / 100);
+      }
+      if (ocrTemp) {
     await import("node:fs/promises").then(({ rm }) => rm(ocrTemp, { recursive: true, force: true }).catch(() => {}));
   }
   return {
@@ -149,7 +156,7 @@ export async function processPdfBuffer(buffer, { filename = "documento.pdf", use
     invoiceDate: fields.invoiceDate ?? "",
     subtotal: fields.totals?.subtotal ?? "",
     tax: fields.totals?.tax ?? "",
-    total: fields.totals?.total ?? "",
+    total: totalFactura,
     taxLabel: fields.taxLabel ?? "",
     matched: (fields.matched ?? []).join("|"),
     lineItems: lineItems

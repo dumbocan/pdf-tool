@@ -8,6 +8,8 @@
 // column-aligned totals tables, etc.). When no vendor matches, callers fall
 // back to the generic extractor or the MiniMax LLM path.
 
+import { parseMercadonaLines } from "./mercadona-parser.js";
+
 export const VENDOR_NAMES = ["mercadona", "miller", "empark", "acastimar", "doctoragua"];
 
 const VENDOR_MARKERS = [
@@ -252,6 +254,11 @@ function cleanLineDescription(value) {
 // Per-vendor line-item row parsers. Each returns an array of rows with the
 // numeric columns the layout prints (qty, unit price, amount, tax rate...).
 const VENDOR_LINE_PARSERS = {
+  mercadona(text) {
+// Tabular ticket layout (Descripción / Unid. / P.Unitario / B.Imp. / IGIC /
+// Cuota IGIC / Importe) — cubre las facturas mensuales y los tickets.
+return parseMercadonaLines(typeof text === "string" ? text : "").lineItems;
+  },
   miller(text) {
     const region = boundedRegion(text, "Refª", "Recibo Resumen");
     return [...region.matchAll(
