@@ -89,6 +89,7 @@
     <div class="resumen" id="resumen"></div>
     <button class="boton sec" id="descargar">⬇️ Descargar facturas.csv</button>
     <button class="boton" id="renombrar">📁 Renombrar los PDF con mi formato</button>
+    <button class="boton verde" id="genParser" style="display:none">✨ Crear parser para este formato</button>
     <div style="overflow-x:auto; margin-top:12px;">
       <table id="tabla">
         <thead><tr>
@@ -264,6 +265,40 @@ $("procesar").addEventListener("click", async () => {
   $("resultado").classList.remove("oculto");
   btn.disabled = false;
   ultimasRows = rows;
+
+  // Botón "crear parser": visible cuando hay facturas con layout que el parser no cubre
+  const sinCubrir = rows.filter((r) => !r.error && r.total === "" && r.articles.length === 0);
+  const genBtn = $("genParser");
+  if (sinCubrir.length) {
+    genBtn.style.display = "";
+    genBtn.textContent = `✨ Crear parser para este formato (${sinCubrir.length} factura${sinCubrir.length === 1 ? "" : "s"} sin leer)`;
+  } else {
+    genBtn.style.display = "none";
+  }
+  genBtn.onclick = async () => {
+    const row = sinCubrir[0];
+    const pdf = pdfs.find((p) => p.name === row.file);
+    if (!pdf) { alert("No encuentro el archivo para generar el parser."); return; }
+    genBtn.disabled = true;
+    genBtn.textContent = "✨ Generando parser con IA...";
+    try {
+      const dataUrl = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(pdf.file); });
+      const res = await fetch("/generate-parser", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...(token ? { authorization: "Bearer " + token } : {}) },
+        body: JSON.stringify({ data: dataUrl.split(",")[1], filename: pdf.name }),
+      });
+      const { result } = await res.json();
+      if (result.error) { alert("No se pudo generar el parser: " + result.error); return; }
+      const detalle = `Número: ${result.fields.invoiceNumber || "MISS"} · Fecha: ${result.fields.invoiceDate || "MISS"} · Total: ${(result.fields.totals && result.fields.totals.total) || "MISS"}`;
+      alert(`✅ Parser creado para \"${result.vendorDisplay}\" (${result.slug}).\n${detalle}\n\nQuedó guardado en el código (working tree, sin commitear). Ahora reproceso la carpeta con el parser nuevo.`);
+      $("procesar").click(); // reprocesa: el server ya carga el parser nuevo
+    } catch (err) {
+      alert("Error al generar: " + err.message);
+    } finally {
+      genBtn.disabled = false;
+    }
+  };
 
   $("descargar").onclick = () => {
     const header = "archivo,proveedor,numero_factura,fecha,subtotal,impuesto,total,impuesto_label,articulo,cantidad,precio_unitario,importe_articulo,impuesto_articulo";

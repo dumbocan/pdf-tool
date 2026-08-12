@@ -8,9 +8,27 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { extractTextFromPdf, enrichInvoiceFields } from "./extract.js";
-import { detectVendor, parseVendorLineItems } from "./vendor-parsers.js";
-import { providerById } from "./providers.js";
+    import { extractTextFromPdf, enrichInvoiceFields } from "./extract.js";
+    import { providerById } from "./providers.js";
+
+    // Los parsers de proveedor se cargan con cache-busting por mtime: si la web
+    // genera un parser nuevo (POST /generate-parser), el siguiente proceso ya lo
+    // usa sin reiniciar el servidor.
+    let parsersCache = null;
+    async function getParsers() {
+      const { statSync } = await import("node:fs");
+      const parsersPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "vendor-parsers.js");
+      let mtime = 0;
+      try {
+        mtime = statSync(parsersPath).mtimeMs;
+      } catch {
+        // sin archivo: módulo por defecto
+      }
+      if (parsersCache && parsersCache.mtime === mtime) return parsersCache.mod;
+      const mod = await import(`./vendor-parsers.js?v=${mtime}`);
+      parsersCache = { mtime, mod };
+      return mod;
+    }
 
 export async function listPdfFiles(folder) {
   return (await readdir(folder)).filter((f) => /\.pdf$/i.test(f)).sort();
@@ -94,6 +112,7 @@ export async function processPdfBuffer(buffer, { filename = "documento.pdf", use
     // column layouts); the deterministic parsers still fill number/date/totals.
     fields = enrichInvoiceFields(text);
   }
+  const { detectVendor, parseVendorLineItems } = await getParsers();
   const vendor = detectVendor(text);
   let lineItems = vendor ? parseVendorLineItems(text, vendor) : [];
   let llmFields = null;

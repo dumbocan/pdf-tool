@@ -14,6 +14,7 @@ import { envWithFile } from "./env.js";
 import { providerById } from "./providers.js";
     import { createMcpFacade } from "./mcp-facade.js";
     import { processPdfBuffer } from "./folder-scan.js";
+    import { generateParser } from "./parser-generator.js";
 
 const VERSION = (() => {
   try {
@@ -376,7 +377,7 @@ export function createServer({
       await getMcpFacade().handleMcpRequest(request, response);
       return;
     }
-        if (request.method !== "POST" || !["/extract", "/extract-with-llm", "/process"].includes(url.pathname)) {
+        if (request.method !== "POST" || !["/extract", "/extract-with-llm", "/process", "/generate-parser"].includes(url.pathname)) {
           response.writeHead(404);
           response.end();
           return;
@@ -395,6 +396,22 @@ export function createServer({
           validateInput(input, { includeLlmFields: isLlmRequest });
           if (isLlmRequest && !llmApiKey) throw requestError("LLM service is not configured", 503);
           const buffer = decodeBase64(input.data);
+          if (url.pathname === "/generate-parser") {
+            // Genera un parser para un layout nuevo (web: botón "crear parser").
+            // Escribe en el working tree del repo; nunca commitea. Sin IA -> 503.
+            if (!llmApiKey) throw requestError("LLM service is not configured", 503);
+            try {
+              const result = await generateParser({
+                buffer,
+                filename: typeof input.filename === "string" ? input.filename : "documento.pdf",
+                name: typeof input.name === "string" ? input.name : undefined,
+              });
+              jsonResponse(response, 200, { result }, maxResponseBytes);
+            } catch (error) {
+              jsonResponse(response, 200, { result: { error: String(error?.message ?? error) } }, maxResponseBytes);
+            }
+            return;
+          }
           if (url.pathname === "/process") {
             // Pipeline completo por archivo (mismo resultado que el CLI): texto →
             // OCR → parsers de proveedor → LLM (solo si hay clave configurada).
