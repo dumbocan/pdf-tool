@@ -355,7 +355,11 @@ export function createServer({
         if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/app")) {
           try {
             const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
-            response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+            response.writeHead(200, {
+              "content-type": "text/html; charset=utf-8",
+              // La UI cambia seguido durante el desarrollo: no cachear.
+              "cache-control": "no-cache",
+            });
             response.end(html);
           } catch {
             response.writeHead(404);

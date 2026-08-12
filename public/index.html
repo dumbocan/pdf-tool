@@ -29,6 +29,10 @@
   tr.erro { background:#fef2f2; color:var(--rojo); }
   .archivo { font-weight:600; }
   .oculto { display:none; }
+  /* El input de archivos no puede estar display:none: Firefox/Chrome no abren
+     el selector con click() si el elemento no es visible. Lo ocultamos con
+     opacity/absolute (técnica clásica) para que el clic del botón funcione. */
+  input[type=file]#carpeta { position:absolute; opacity:0; width:1px; height:1px; pointer-events:none; }
   .aviso { background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 14px; font-size:14px; margin:10px 0; }
   #claveBox { margin-top:12px; }
   #claveBox input { padding:8px 10px; border:1px solid var(--borde); border-radius:6px; width:280px; font-size:14px; }
@@ -43,7 +47,7 @@
   <div class="panel">
     <p class="paso">Paso 1 — Elegí tu carpeta</p>
     <button class="boton" id="elegir">Elegí la carpeta con tus facturas</button>
-    <input type="file" id="carpeta" webkitdirectory directory multiple class="oculto">
+    <input type="file" id="carpeta" webkitdirectory directory multiple>
     <p id="pdfCount"></p>
     <div class="oculto" id="opciones">
       <label class="opcion"><input type="checkbox" id="ocr"> Son fotos o escaneos de papel (los leo con OCR)</label>
