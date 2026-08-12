@@ -162,14 +162,14 @@ const ENV_PATH = path.join(ROOT, ".env");
     // Formatos de renombrado preestablecidos, con ejemplo real para que un
     // usuario no-técnico elija con números sin saber la sintaxis de {variables}.
     const PATTERN_PRESETS = [
-      { pattern: "{fecha}_{proveedor}_{palabra}", example: "2026-08-01_miller_box.pdf" },
-      { pattern: "{fecha}_{proveedor}", example: "2026-08-01_miller.pdf" },
+      { pattern: "{fecha}_{proveedor}_{palabra}", example: "2026-08-01_supermercado_compra-semanal.pdf" },
+      { pattern: "{fecha}_{proveedor}", example: "2026-08-01_supermercado.pdf" },
       { pattern: "{fecha}", example: "2026-08-01.pdf" },
-      { pattern: "{proveedor}_{fecha}", example: "miller_2026-08-01.pdf" },
-      { pattern: "{proveedor}", example: "miller.pdf" },
-      { pattern: "{numero}_{fecha}", example: "F2939-26_2026-08-01.pdf" },
-      { pattern: "{fecha}_{numero}", example: "2026-08-01_F2939-26.pdf" },
-      { pattern: "{palabra}_{proveedor}_{fecha}", example: "box_miller_2026-08-01.pdf" },
+      { pattern: "{proveedor}_{fecha}", example: "supermercado_2026-08-01.pdf" },
+      { pattern: "{proveedor}", example: "supermercado.pdf" },
+      { pattern: "{numero}_{fecha}", example: "B-12345_2026-08-01.pdf" },
+      { pattern: "{fecha}_{numero}", example: "2026-08-01_B-12345.pdf" },
+      { pattern: "{palabra}_{proveedor}_{fecha}", example: "compra-semanal_supermercado_2026-08-01.pdf" },
     ];
 
     // Elegí formato de renombrado: presets numerados + "otro" para escribir el propio.
@@ -336,7 +336,7 @@ function deterministicKeyword(row) {
 
 async function renamePdfs(rows, folder, env) {
   // Rename each processed PDF to the user's pattern, e.g.
-  // {fecha}_{proveedor}_{palabra} -> 2026-08-01_miller_alquiler-trasteros.pdf
+  // {fecha}_{proveedor}_{palabra} -> 2026-08-01_supermercado_compra-semanal.pdf
   const pattern = env.PDF_NAME_PATTERN || "{fecha}_{proveedor}_{palabra}";
   const used = new Set();
   const renamed = [];
