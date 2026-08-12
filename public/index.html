@@ -64,7 +64,7 @@
       <table id="tabla">
         <thead><tr>
           <th>Archivo</th><th>Proveedor</th><th>Número</th><th>Fecha</th>
-          <th>Subtotal</th><th>Impuesto</th><th>Total</th><th>Artículos</th>
+          <th>Artículo</th><th>Cant.</th><th>P. unitario</th><th>Importe</th><th>Total</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -83,6 +83,7 @@ let token = localStorage.getItem("pdfToolToken") || "";
 $("elegir").addEventListener("click", () => $("carpeta").click());
 $("carpeta").addEventListener("change", (e) => {
   pdfs = [...e.target.files].filter((f) => /\.pdf$/i.test(f.name));
+  pdfs.sort((a, b) => a.name.localeCompare(b.name, "es")); // mismo orden que el CLI
   $("pdfCount").textContent = pdfs.length
     ? `✅ Encontré ${pdfs.length} factura${pdfs.length === 1 ? "" : "s"} en esa carpeta.`
     : "No encontré archivos PDF en esa carpeta.";
@@ -149,26 +150,40 @@ $("procesar").addEventListener("click", async () => {
   const rows = [];
   for (let i = 0; i < pdfs.length; i++) {
     $("progreso").textContent = `Procesando ${i + 1}/${pdfs.length}: ${pdfs[i].name} ...`;
-    try {
-      const row = await procesarUno(pdfs[i]);
-      rows.push(row);
-      const tr = document.createElement("tr");
-      const articulos = Array.isArray(row.articles) && row.articles.length
-        ? row.articles.map((a) => esc(a.description)).join(" · ")
-        : esc(row.lineItems || "");
-      tr.innerHTML = `<td class="archivo">${esc(row.file)}</td><td>${esc(row.vendor)}</td>` +
-        `<td>${esc(row.invoiceNumber)}</td><td>${esc(row.invoiceDate)}</td>` +
-        `<td>${esc(row.subtotal)}</td><td>${esc(row.tax)}</td><td><b>${esc(row.total)}</b></td>` +
-        `<td>${articulos}</td>`;
-      if (row.error) tr.classList.add("erro");
-      tbody.appendChild(tr);
-    } catch (err) {
-      rows.push({ file: pdfs[i].name, error: err.message });
-      const tr = document.createElement("tr");
-      tr.className = "erro";
-      tr.innerHTML = `<td class="archivo">${esc(pdfs[i].name)}</td><td colspan="7">⚠ ${esc(err.message)}</td>`;
-      tbody.appendChild(tr);
-    }
+        try {
+          const row = await procesarUno(pdfs[i]);
+          rows.push(row);
+          if (row.error) {
+            const tr = document.createElement("tr");
+            tr.className = "erro";
+            tr.innerHTML = `<td class="archivo">${esc(row.file)}</td><td colspan="8">⚠ ${esc(row.error)}</td>`;
+            tbody.appendChild(tr);
+            continue;
+          }
+          // Una fila por artículo (cantidad, precio unitario, importe) — como el CSV.
+          const arts = (Array.isArray(row.articles) && row.articles.length) ? row.articles : [null];
+          const cab = `<td class="archivo" rowspan="${arts.length}">${esc(row.file)}</td>` +
+            `<td rowspan="${arts.length}">${esc(row.vendor)}</td>` +
+            `<td rowspan="${arts.length}">${esc(row.invoiceNumber)}</td>` +
+            `<td rowspan="${arts.length}">${esc(row.invoiceDate)}</td>`;
+          const total = `<td rowspan="${arts.length}"><b>${esc(row.total)}</b></td>`;
+          arts.forEach((art, idx) => {
+            const tr = document.createElement("tr");
+            const detalle =
+              `<td>${esc(art ? art.description : row.lineItems || "")}</td>` +
+              `<td>${esc(art && art.units != null && art.units !== "" ? art.units : "")}</td>` +
+              `<td>${esc(art && art.unit_price != null && art.unit_price !== "" ? art.unit_price : "")}</td>` +
+              `<td>${esc(art && art.amount != null && art.amount !== "" ? art.amount : "")}</td>`;
+            tr.innerHTML = idx === 0 ? cab + detalle + total : detalle;
+            tbody.appendChild(tr);
+          });
+        } catch (err) {
+          rows.push({ file: pdfs[i].name, error: err.message });
+          const tr = document.createElement("tr");
+          tr.className = "erro";
+          tr.innerHTML = `<td class="archivo">${esc(pdfs[i].name)}</td><td colspan="8">⚠ ${esc(err.message)}</td>`;
+          tbody.appendChild(tr);
+        }
   }
   $("progreso").textContent = "";
   const conDatos = rows.filter((r) => r.vendor || r.invoiceNumber || r.total);
