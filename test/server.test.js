@@ -24,7 +24,11 @@ test("health and version are unauthenticated and return the contract", async () 
 
     const version = await fetch(`${baseUrl}/version`);
     assert.equal(version.status, 200);
-      assert.deepEqual(await version.json(), { name: "pdf-tool", version: "0.2.0", llmConfigured: false });
+    const versionJson = await version.json();
+    assert.equal(versionJson.name, "pdf-tool");
+    assert.equal(versionJson.version, "0.2.0");
+    assert.equal(versionJson.llmConfigured, false);
+    assert.equal(typeof versionJson.renamePattern, "string");
   });
 });
 

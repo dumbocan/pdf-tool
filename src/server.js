@@ -341,7 +341,13 @@ export function createServer({
       return;
     }
         if (request.method === "GET" && url.pathname === "/version") {
-          jsonResponse(response, 200, { name: "pdf-tool", version: VERSION, llmConfigured: Boolean(llmApiKey) }, maxResponseBytes);
+          const env = envWithFile();
+          jsonResponse(response, 200, {
+            name: "pdf-tool",
+            version: VERSION,
+            llmConfigured: Boolean(llmApiKey),
+            renamePattern: env.PDF_NAME_PATTERN || "{fecha}_{proveedor}_{palabra}",
+          }, maxResponseBytes);
           return;
         }
         // Página web local (interfaz para no-técnicos). Sin auth: es la UI de

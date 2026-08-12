@@ -60,6 +60,7 @@
     <p class="paso">Paso 2 — Resultado</p>
     <div class="resumen" id="resumen"></div>
     <button class="boton sec" id="descargar">⬇️ Descargar facturas.csv</button>
+    <button class="boton" id="renombrar">📁 Renombrar los PDF con mi formato</button>
     <div style="overflow-x:auto; margin-top:12px;">
       <table id="tabla">
         <thead><tr>
@@ -80,16 +81,47 @@ const $ = (id) => document.getElementById(id);
 let pdfs = [];
 let token = localStorage.getItem("pdfToolToken") || "";
 
-$("elegir").addEventListener("click", () => $("carpeta").click());
-$("carpeta").addEventListener("change", (e) => {
-  pdfs = [...e.target.files].filter((f) => /\.pdf$/i.test(f.name));
-  // Se mantiene el orden de entrada (el de la carpeta), igual que el CLI.
+let pdfs = [];
+let dirHandles = null; // solo con showDirectoryPicker (permite renombrar)
+let token = localStorage.getItem("pdfToolToken") || "";
+let ultimasRows = [];
+
+function mostrarCarpeta() {
   $("pdfCount").textContent = pdfs.length
     ? `✅ Encontré ${pdfs.length} factura${pdfs.length === 1 ? "" : "s"} en esa carpeta.`
     : "No encontré archivos PDF en esa carpeta.";
   $("opciones").classList.toggle("oculto", pdfs.length === 0);
   $("resultado").classList.add("oculto");
   $("tabla").querySelector("tbody").innerHTML = "";
+}
+
+$("elegir").addEventListener("click", async () => {
+  // Chrome/Edge: pedimos permiso de carpeta, que además permite renombrar.
+  if (window.showDirectoryPicker) {
+    try {
+      const dir = await window.showDirectoryPicker();
+      pdfs = [];
+      for await (const [name, handle] of dir.entries()) {
+        if (!/\.pdf$/i.test(name)) continue;
+        pdfs.push({ name, handle, file: await handle.getFile() });
+      }
+      dirHandles = dir;
+      mostrarCarpeta();
+      return;
+    } catch (err) {
+      if (err.name === "AbortError") return; // el usuario canceló el diálogo
+      // cualquier otro error: caemos al selector de archivos clásico
+    }
+  }
+  $("carpeta").click();
+});
+
+$("carpeta").addEventListener("change", (e) => {
+  pdfs = [...e.target.files]
+    .filter((f) => /\.pdf$/i.test(f.name))
+    .map((f) => ({ name: f.name, handle: null, file: f }));
+  dirHandles = null;
+  mostrarCarpeta();
 });
 
 // ¿La instalación tiene IA configurada? (para mostrar el checkbox)
@@ -150,9 +182,9 @@ $("procesar").addEventListener("click", async () => {
   const rows = [];
   for (let i = 0; i < pdfs.length; i++) {
     $("progreso").textContent = `Procesando ${i + 1}/${pdfs.length}: ${pdfs[i].name} ...`;
-        try {
-          const row = await procesarUno(pdfs[i]);
-          rows.push(row);
+    try {
+      const row = await procesarUno(pdfs[i].file);
+      rows.push(row);
           if (row.error) {
             const tr = document.createElement("tr");
             tr.className = "erro";
@@ -192,6 +224,7 @@ $("procesar").addEventListener("click", async () => {
     (proveedores.length ? ` · Proveedores detectados: ${proveedores.join(", ")}` : "");
   $("resultado").classList.remove("oculto");
   btn.disabled = false;
+  ultimasRows = rows;
 
   $("descargar").onclick = () => {
     const header = "archivo,proveedor,numero_factura,fecha,subtotal,impuesto,total,impuesto_label,articulo,cantidad,precio_unitario,importe_articulo,impuesto_articulo";
@@ -206,6 +239,30 @@ $("procesar").addEventListener("click", async () => {
     a.download = "facturas.csv";
     a.click();
     URL.revokeObjectURL(a.href);
+  };
+
+  $("renombrar").onclick = async () => {
+    const pat = await fetch("/version").then((r) => r.json()).then((v) => v.renamePattern)
+      .catch(() => "{fecha}_{proveedor}_{palabra}");
+    if (!dirHandles) {
+      alert("Para renombrar necesitás Chrome o Edge: volvé a \"Elegí la carpeta\" y aceptá el permiso que pide el navegador.");
+      return;
+    }
+    let ok = 0, fails = 0, ya = 0;
+    for (const row of ultimasRows) {
+      if (row.error || !row.newName) continue;
+      const pdf = pdfs.find((p) => p.name === row.file);
+      if (!pdf || !pdf.handle) continue;
+      if (pdf.name.toLowerCase() === row.newName.toLowerCase()) { ya += 1; continue; }
+      try {
+        await pdf.handle.move(row.newName);
+        ok += 1;
+      } catch { fails += 1; }
+    }
+    const msg = ok
+      ? `✅ Renombradas ${ok} factura${ok === 1 ? "" : "s"} (formato: ${pat})`
+      : (fails ? "⚠ No se pudo renombrar todo (¿permiso o nombre repetido?)." : "Sin cambios: ya tenían el formato.");
+    alert(msg);
   };
 });
 </script>

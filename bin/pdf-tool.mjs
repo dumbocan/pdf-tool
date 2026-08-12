@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 import { spawnSync } from "node:child_process";
-import { scanFolder, listPdfFiles } from "../src/folder-scan.js";
+import { scanFolder, listPdfFiles, buildNewName } from "../src/folder-scan.js";
 import { PROVIDERS } from "../src/providers.js";
 import { t } from "../src/i18n.js";
 
@@ -310,30 +310,6 @@ async function askForFolder() {
   return chosen;
 }
 
-function sanitizeFilenamePart(value, fallback) {
-  const cleaned = String(value ?? "").replace(/[\\/:*?"<>|\s]+/g, "-").replace(/^-+|-+$/g, "");
-  return cleaned || fallback;
-}
-
-const STOPWORDS = new Set([
-  "de", "del", "el", "la", "los", "las", "un", "una", "con", "por", "para", "y", "o", "en", "a",
-  "factura", "periodo", "período", "numero", "número", "modulo", "módulo", "importe", "total",
-  "precio", "unidad", "uds", "descripcion", "descripción", "cant", "nº", "no", "ref", "nif", "cif",
-]);
-
-function deterministicKeyword(row) {
-  // Fallback when no LLM summary is available: take the content words of the
-  // first line item description (strip numbers, dates, codes and stopwords).
-  const first = row.lineItems?.split(";")[0]?.split("::")[0] ?? "";
-  const words = first
-    .toLowerCase()
-    .replace(/\d+([.,]\d+)?/g, " ")
-    .replace(/[^a-zñáéíóú\s-]/g, " ")
-    .split(/[\s-]+/)
-    .filter((w) => w.length > 2 && !STOPWORDS.has(w));
-  return [...new Set(words)].slice(0, 3).join("-") || "";
-}
-
 async function renamePdfs(rows, folder, env) {
   // Rename each processed PDF to the user's pattern, e.g.
   // {fecha}_{proveedor}_{palabra} -> 2026-08-01_supermercado_compra-semanal.pdf
@@ -342,32 +318,26 @@ async function renamePdfs(rows, folder, env) {
   const renamed = [];
   for (const row of rows) {
     if (row.error || !row.file) continue;
-    const vendor = row.vendor || "desconocido";
-    const keyword = row.keyword || deterministicKeyword(row) || vendor;
-    const date = row.invoiceDate || "";
-    const name = pattern
-      .replaceAll("{fecha}", sanitizeFilenamePart(date, "sin-fecha"))
-      .replaceAll("{proveedor}", sanitizeFilenamePart(vendor, "desconocido"))
-      .replaceAll("{palabra}", sanitizeFilenamePart(keyword, vendor))
-      .replaceAll("{numero}", sanitizeFilenamePart(row.invoiceNumber, "sin-numero"));
-        const base = name || `factura-${row.file.replace(/\.pdf$/i, "")}`;
-        let target = `${base}.pdf`;
-        if (row.file.toLowerCase() === target.toLowerCase()) {
-          // Already conformant (idempotency): never rename a file a second time.
-          used.add(target.toLowerCase());
-          continue;
-        }
-        let n = 1;
-    while (used.has(target.toLowerCase()) || existsSync(path.join(folder, target))) {
-      target = `${base}-${n}.pdf`;
+    const target = buildNewName(row, pattern);
+    if (!target) continue;
+    const base = target.replace(/\.pdf$/i, "");
+    if (row.file.toLowerCase() === target.toLowerCase()) {
+      // Already conformant (idempotency): never rename a file a second time.
+      used.add(target.toLowerCase());
+      continue;
+    }
+    let uniqueTarget = target;
+    let n = 1;
+    while (used.has(uniqueTarget.toLowerCase()) || existsSync(path.join(folder, uniqueTarget))) {
+      uniqueTarget = `${base}-${n}.pdf`;
       n += 1;
     }
-    used.add(target.toLowerCase());
+    used.add(uniqueTarget.toLowerCase());
     const from = path.join(folder, row.file);
-    const to = path.join(folder, target);
+    const to = path.join(folder, uniqueTarget);
     try {
       await rename(from, to);
-      renamed.push({ from: row.file, to: target });
+      renamed.push({ from: row.file, to: uniqueTarget });
     } catch {
       // keep going; the CSV still references the original name
     }
