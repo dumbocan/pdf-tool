@@ -70,6 +70,7 @@
     <button class="boton" id="elegir">Elegí la carpeta con tus facturas</button>
     <input type="file" id="carpeta" webkitdirectory directory multiple>
     <p id="pdfCount"></p>
+    <p id="barrido"></p>
     <div class="oculto" id="opciones">
       <label class="opcion"><input type="checkbox" id="ocr"> Son fotos o escaneos de papel (los leo con OCR)</label>
       <label class="opcion" id="llmLabel"><input type="checkbox" id="llm"> Usar IA para las facturas desconocidas</label>
@@ -119,6 +120,39 @@ function mostrarCarpeta() {
   $("opciones").classList.toggle("oculto", pdfs.length === 0);
   $("resultado").classList.add("oculto");
   $("tabla").querySelector("tbody").innerHTML = "";
+  if (pdfs.length) barrido();
+  else $("barrido").textContent = "";
+}
+
+// Barrido: revisa si ya existe parser para cada factura (sin OCR ni IA),
+// para saber ANTES si hace falta usar IA o crear un parser nuevo.
+async function barrido() {
+  const el = $("barrido");
+  el.classList.remove("aviso");
+  el.textContent = "🔎 Revisando si ya hay parser para estas facturas...";
+  const resultados = [];
+  for (const p of pdfs) {
+    try {
+      const dataUrl = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(p.file); });
+      const res = await fetch("/process", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...(token ? { authorization: "Bearer " + token } : {}) },
+        body: JSON.stringify({ data: dataUrl.split(",")[1], filename: p.name, ocr: false, llm: false }),
+      });
+      const { row } = await res.json();
+      resultados.push({ name: p.name, row });
+    } catch {
+      resultados.push({ name: p.name, row: null });
+    }
+  }
+  const sinCubrir = resultados.filter((r) => !r.row || r.row.error || (r.row.total === "" && r.row.articles.length === 0));
+  if (!sinCubrir.length) {
+    el.textContent = `🔎 Barrido: ${resultados.length} factura${resultados.length === 1 ? "" : "s"} — todas con parser ✓ (no necesitás IA)`;
+  } else {
+    el.classList.add("aviso");
+    const nombres = sinCubrir.map((r) => r.name).slice(0, 3).join(", ");
+    el.textContent = `🔎 Barrido: ${sinCubrir.length} de ${resultados.length} sin parser (${nombres}${sinCubrir.length > 3 ? "..." : ""}) — marcá \"Usar IA\" o creá el parser al procesar`;
+  }
 }
 
 $("elegir").addEventListener("click", async () => {
