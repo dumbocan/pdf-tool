@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
+import { Writable } from "node:stream";
 import { spawnSync } from "node:child_process";
 import { scanFolder, listPdfFiles } from "../src/folder-scan.js";
 import { PROVIDERS } from "../src/providers.js";
@@ -73,13 +74,30 @@ function friendlySummary(rows, folder) {
   return lines.filter(Boolean).join("\n");
 }
 
-function prompt(question) {
-  // Non-interactive (docker run, cron, piped): skip the question and use
-  // defaults — flags like --rename / --llm / --out decide the behavior.
-  if (!process.stdin.isTTY) return Promise.resolve("");
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => rl.question(question, (answer) => { rl.close(); resolve(answer.trim()); }));
-}
+    function prompt(question) {
+      // Non-interactive (docker run, cron, piped): skip the question and use
+      // defaults — flags like --rename / --llm / --out decide the behavior.
+      if (!process.stdin.isTTY) return Promise.resolve("");
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      return new Promise((resolve) => rl.question(question, (answer) => { rl.close(); resolve(answer.trim()); }));
+    }
+
+    // Igual que prompt pero SIN mostrar lo que se escribe/pega (para API keys,
+    // como hace sudo con las contraseñas). La key se guarda igual en el .env
+    // con permisos 600 — esto solo evita que se vea en pantalla.
+    function promptSecret(question) {
+      if (!process.stdin.isTTY) return Promise.resolve("");
+      const nullOut = new Writable({ write(_chunk, _enc, cb) { cb(); } });
+      const rl = createInterface({ input: process.stdin, output: nullOut, terminal: true });
+      process.stdout.write(question);
+      return new Promise((resolve) => {
+        rl.question("", (answer) => {
+          process.stdout.write("\n");
+          rl.close();
+          resolve(answer.trim());
+        });
+      });
+    }
 
 const ENV_PATH = path.join(ROOT, ".env");
 
@@ -181,7 +199,7 @@ const ENV_PATH = path.join(ROOT, ".env");
   // Clave (los proveedores locales sin key la omiten)
   let key = current.LLM_API_KEY ?? current.MINIMAX_API_KEY ?? "";
   if (provider.needsKey) {
-    const answer = await prompt(t("provider_key", { provider: provider.name }));
+    const answer = await promptSecret(t("provider_key", { provider: provider.name }));
     if (answer) key = answer.trim();
   } else if (!key) {
     key = "local";
