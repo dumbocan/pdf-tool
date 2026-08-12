@@ -108,7 +108,13 @@ pdf-tool facturas C:\Mis Documentos\Facturas --ocr
 pdf-tool web
 ```
 
-Se abre una página en tu navegador (todo queda en tu computadora): elegís la carpeta con el **mouse**, tocás **Procesar**, y ves las facturas en una tabla con botón para **descargar facturas.csv**. Ideal para los que no quieren tocar una terminal — y el instalador te la ofrece al final.
+Se abre una página en tu navegador (todo queda en tu computadora):
+- Elegís la carpeta con el **mouse** y un **barrido automático** te dice si las facturas ya tienen parser o vas a necesitar IA
+- Tocado **Procesar** → ves cada factura con **una fila por artículo** (cantidad, precio unitario, importe) y el total
+- Botones para **descargar facturas.csv** y **renombrar los PDF** con tu formato (sin pisar archivos)
+- Modo oscuro 🌙, barra de progreso, y si aparece un proveedor nuevo: botón **✨ Crear parser** que lo genera con IA (queda para revisar, nunca se commitea solo)
+
+Ideal para los que no quieren tocar una terminal — y el instalador te la ofrece al final.
 
 ---
 
@@ -153,18 +159,24 @@ curl -X POST http://127.0.0.1:3000/extract \
 ```
 
 ### Cómo aprende un proveedor nuevo
+
+**Desde la web:** cuando hay facturas que el parser no cubre, aparece el botón **✨ Crear parser para este formato** — la IA analiza la factura, genera el parser y reprocesa la carpeta.
+
+**Desde la terminal:**
 ```bash
 node scripts/generate-vendor-parser.mjs factura-nueva.pdf
 ```
-Tu proveedor de IA (el que configuraste en `pdf-tool config`) analiza la factura, identifica las etiquetas (número, fecha, totales, artículos) y **genera el parser** con su test. Así, cualquier factura nueva — de supermercado, suministros, alquileres, lo que sea — se incorpora con un solo comando. El resultado se revisa y se commitea — nunca se auto-commitea código desde un PDF.
+Tu proveedor de IA (el que configuraste en `pdf-tool config`) analiza la factura, identifica las etiquetas (número, fecha, totales, artículos) y **genera el parser** con su test. Así, cualquier factura nueva — de supermercado, suministros, alquileres, lo que sea — se incorpora sin tocar código a mano. El resultado se revisa y se commitea — nunca se auto-commitea código desde un PDF.
 
 ### Endpoints HTTP
 | Ruta | Qué hace |
 |---|---|
 | `POST /extract` | Extrae texto + campos + artículos (determinístico) |
 | `POST /extract-with-llm` | Igual + estructura con IA (opcional, requiere clave) |
+| `POST /process` | Pipeline completo por archivo (mismo resultado que el CLI) — lo usa la web |
+| `POST /generate-parser` | Genera un parser para un layout nuevo (requiere IA; escribe en el working tree, no commitea) |
 | `GET /healthz` | Estado |
-| `GET /version` | Versión |
+| `GET /version` | Versión + si hay IA configurada + formato de renombrado |
 | `POST /mcp` | Interfaz MCP (para agentes como Laia) |
 
 ### Autenticación
