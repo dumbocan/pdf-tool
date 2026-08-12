@@ -12,6 +12,7 @@ RUN corepack enable && pnpm install --frozen-lockfile --prod --ignore-scripts
 COPY src ./src
 COPY bin ./bin
 COPY scripts ./scripts
+COPY public ./public
 
 ENV NODE_ENV=production
 EXPOSE 3000
