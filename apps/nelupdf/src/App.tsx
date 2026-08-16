@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
-
-// Motor de extracción: el proceso Node de NeluPDF (server local del motor).
-// En dev corre en 127.0.0.1:3000; configurable con VITE_MOTOR_URL.
-const MOTOR_URL =
-  (import.meta.env.VITE_MOTOR_URL as string) ?? "http://127.0.0.1:3000";
+import {
+  createTauriDesktopApi,
+  type DesktopApi,
+} from "./lib/desktop-api";
+import { uuidv4 } from "./lib/uuid";
 
 type Row = {
   file: string;
@@ -15,13 +15,16 @@ type Row = {
   subtotal: string;
   tax: string;
   taxLabel: string;
-  data?: string; // base64 (filas del diálogo; el webview no puede leer rutas locales)
   error?: string;
 };
 
 type Progress = { file: string; index: number; total: number };
 
-function App() {
+const desktopApi = createTauriDesktopApi();
+
+type AppProps = { api?: DesktopApi };
+
+function App({ api = desktopApi }: AppProps) {
   const [rows, setRows] = useState<Row[]>([]);
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -43,40 +46,45 @@ function App() {
     for (let i = 0; i < buf.length; i += chunk) {
       binary += String.fromCharCode(...buf.subarray(i, i + chunk));
     }
-    const base64 = btoa(binary);
-    const res = await fetch(`${MOTOR_URL}/extract`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ data: base64, name: file.name }),
-    });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
+    let base64 = btoa(binary);
+    try {
+      const requestId = uuidv4();
+      const registered = await api.registerDocument({
+        requestId,
+        name: file.name,
+        declaredBytes: buf.byteLength,
+        pdfBase64: base64,
+      });
+      const result = await api.extractLocal({
+        requestId: uuidv4(),
+        documentId: registered.documentId,
+      });
+      if (!result.ok) {
+        return {
+          file: file.name,
+          invoiceNumber: "",
+          invoiceDate: "",
+          total: "",
+          subtotal: "",
+          tax: "",
+          taxLabel: "",
+          error: result.error.messageKey,
+        };
+      }
+      const { invoice } = result.data;
       return {
         file: file.name,
-        invoiceNumber: "",
-        invoiceDate: "",
-        total: "",
-        subtotal: "",
-        tax: "",
-        taxLabel: "",
-        data: base64,
-        error: `HTTP ${res.status} ${detail.slice(0, 80)}`,
+        invoiceNumber: invoice.invoiceNumber ?? "",
+        invoiceDate: invoice.invoiceDate ?? "",
+        subtotal: invoice.totals.subtotal ?? "",
+        tax: invoice.totals.tax ?? "",
+        total: invoice.totals.total ?? "",
+        taxLabel: invoice.taxLabel ?? "",
       };
+    } finally {
+      base64 = "";
     }
-    const payload = await res.json();
-    const f = payload.invoiceFields ?? {};
-    const t = f.totals ?? {};
-    return {
-      file: file.name,
-      invoiceNumber: f.invoiceNumber ?? "",
-      invoiceDate: f.invoiceDate ?? "",
-      subtotal: t.subtotal ?? "",
-      tax: t.tax ?? "",
-      total: t.total ?? "",
-      taxLabel: f.taxLabel ?? "",
-      data: base64,
-    };
-  }, []);
+  }, [api]);
 
   const processFiles = useCallback(
     async (files: File[]) => {
@@ -123,38 +131,15 @@ function App() {
         total: paths.length,
       });
       try {
-        // Los paths del drag&drop nativo los lee el MOTOR local (el webview no
-        // puede acceder a rutas del sistema).
-        const res = await fetch(`${MOTOR_URL}/extract-path`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ path: paths[i] }),
-        });
-        if (!res.ok) {
-          const detail = await res.text().catch(() => "");
-          out.push({
-            file: paths[i],
-            invoiceNumber: "",
-            invoiceDate: "",
-            total: "",
-            subtotal: "",
-            tax: "",
-            taxLabel: "",
-            error: `HTTP ${res.status} ${detail.slice(0, 80)}`,
-          });
-          continue;
-        }
-        const payload = await res.json();
-        const f = payload.invoiceFields ?? {};
-        const t = f.totals ?? {};
         out.push({
           file: paths[i].split(/[\\/]/).pop() ?? paths[i],
-          invoiceNumber: f.invoiceNumber ?? "",
-          invoiceDate: f.invoiceDate ?? "",
-          subtotal: t.subtotal ?? "",
-          tax: t.tax ?? "",
-          total: t.total ?? "",
-          taxLabel: f.taxLabel ?? "",
+          invoiceNumber: "",
+          invoiceDate: "",
+          total: "",
+          subtotal: "",
+          tax: "",
+          taxLabel: "",
+          error: "La importación de rutas nativas no está disponible en esta versión.",
         });
       } catch (error) {
         out.push({
@@ -213,82 +198,15 @@ function App() {
   }, [processPaths]);
 
   const requestLlmPreview = useCallback(async (row: Row) => {
-    // Las filas viejas (creadas con versiones anteriores) pueden no tener ni
-    // path ni data: avisar claro en vez de enviar una petición vacía (400).
-    if (!row.file.startsWith("/") && !row.data) {
-      alert(
-        "Esta fila se añadió con una versión anterior de la app. Recargá la app (F5) y volvé a añadir la factura para poder usar la IA.",
-      );
-      return;
-    }
-    setLlmBusy(true);
-    try {
-      // Las filas del drag&drop nativo tienen path absoluto; las del diálogo
-      // solo nombre + base64 (data). El motor acepta ambos.
-      const isPath = row.file.startsWith("/");
-      const res = await fetch(`${MOTOR_URL}/llm-preview`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(isPath ? { path: row.file } : { data: row.data }),
-      });
-      if (!res.ok) {
-        const detail = await res.text().catch(() => "");
-        alert(`Preview falló (HTTP ${res.status}): ${detail.slice(0, 120)}`);
-        return;
-      }
-      const payload = await res.json();
-      setPreview({
-        row,
-        notice: payload.notice,
-        sample: payload.pseudonymizedSample,
-        provider: `${payload.provider.name} (${payload.provider.model})`,
-      });
-    } catch (error) {
-      alert(`Preview falló: ${String(error)}`);
-    } finally {
-      setLlmBusy(false);
-    }
+    void row;
+    alert("La extracción con IA estará disponible en una versión futura.");
   }, []);
 
   const confirmLlm = useCallback(async () => {
     if (!preview) return;
     setLlmBusy(true);
     try {
-      const isPath = preview.row.file.startsWith("/");
-      const res = await fetch(`${MOTOR_URL}/extract-with-llm-privacy`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          isPath ? { path: preview.row.file } : { data: preview.row.data },
-        ),
-      });
-      const payload = await res.json();
-      if (!res.ok || !payload.ok) {
-        alert(
-          `Extracción con IA falló: ${payload.error ?? `HTTP ${res.status}`}`,
-        );
-        return;
-      }
-      const f = payload.fields ?? {};
-      const t = f.totals ?? {};
-      setRows((prev) =>
-        prev.map((r) =>
-          r.file === preview.row.file
-            ? {
-                ...r,
-                invoiceNumber: f.invoiceNumber ?? r.invoiceNumber,
-                invoiceDate: f.invoiceDate ?? r.invoiceDate,
-                subtotal: t.subtotal ?? r.subtotal,
-                tax: t.tax ?? r.tax,
-                total: t.total ?? r.total,
-                taxLabel: f.taxLabel ?? r.taxLabel,
-                error: undefined,
-              }
-            : r,
-        ),
-      );
-    } catch (error) {
-      alert(`Extracción con IA falló: ${String(error)}`);
+      alert("La extracción con IA estará disponible en una versión futura.");
     } finally {
       setLlmBusy(false);
       setPreview(null);

@@ -1,9 +1,13 @@
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { run as axe } from "axe-core";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
+import appSource from "./App.tsx?raw";
+
+afterEach(clearMocks);
 
 async function assertNoA11yViolations(container: HTMLElement) {
   const result = await axe(container);
@@ -13,6 +17,75 @@ async function assertNoA11yViolations(container: HTMLElement) {
 }
 
 describe("NeluPDF selection screen", () => {
+  it("does not contain the retired engine HTTP transport", () => {
+    expect(appSource).not.toContain("fetch(");
+    expect(appSource).not.toContain("VITE_MOTOR_URL");
+    expect(appSource).not.toContain("127.0.0.1:3000");
+    expect(appSource).not.toContain("extract-path");
+  });
+
+  it("registers and extracts a selected PDF through Tauri IPC", async () => {
+    const user = userEvent.setup();
+    const commands: string[] = [];
+    mockIPC((command) => {
+      commands.push(command);
+      if (command === "register_document_v1") {
+        return {
+          ok: true,
+          protocolVersion: 1,
+          requestId: "123e4567-e89b-42d3-a456-426614174000",
+          data: {
+            documentId: "document-1",
+            displayName: "invoice.pdf",
+            byteLength: 4,
+          },
+        };
+      }
+      if (command === "extract_local_v1") {
+        return {
+          ok: true,
+          protocolVersion: 1,
+          requestId: "123e4567-e89b-42d3-a456-426614174001",
+          data: {
+            provenance: "local_deterministic",
+            documentSha256: "sha256",
+            status: "complete",
+            pagesProcessed: 1,
+            truncationReason: null,
+            extractionMode: "digital_text",
+            invoice: {
+              invoiceNumber: "A-1",
+              invoiceDate: "2026-08-17",
+              simplifiedInvoiceDate: "2026-08-17",
+              taxLabel: "IVA",
+              totals: { subtotal: "10", tax: "2.1", total: "12.1" },
+              matched: [],
+            },
+            untrusted: true,
+          },
+        };
+      }
+      return undefined;
+    });
+
+    const { container } = render(<App />);
+    const fileInput =
+      container.querySelector<HTMLInputElement>('input[type="file"]');
+    Object.defineProperty(File.prototype, "arrayBuffer", {
+      configurable: true,
+      value: async () => new TextEncoder().encode("%PDF").buffer,
+    });
+    await user.upload(fileInput!, new File(["%PDF"], "invoice.pdf", {
+      type: "application/pdf",
+    }));
+
+    expect(await screen.findByText("A-1")).toBeInTheDocument();
+    expect(commands.slice(-2)).toEqual([
+      "register_document_v1",
+      "extract_local_v1",
+    ]);
+  });
+
   it("exposes the real PDF selection path with a role and accessible name", () => {
     const { container } = render(<App />);
 
