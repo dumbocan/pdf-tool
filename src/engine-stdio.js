@@ -3,6 +3,7 @@ import {
   parseFrame,
   validateRequest,
   MAX_RESPONSE_BYTES,
+  frameResponse,
 } from "./engine-protocol.js";
 import {
   validatePdfBuffer,
@@ -20,17 +21,36 @@ export const TRUST_BOUNDARY =
   "hidden text injected by the original document (prompt injection vector), " +
   "and model output requires independent review.";
 
-// Frame a JSON object as a 32-bit BE length-prefixed UTF-8 payload.
-function frameResponse(obj) {
-  const payload = Buffer.from(JSON.stringify(obj), "utf8");
-  if (payload.length > MAX_RESPONSE_BYTES) {
-    throw new Error("response_exceeds_limit");
+// Process security boundary (design §5.5): the adapter must never read
+// provider API keys or OCR credentials. If they are present in the
+// environment, strip them and emit a notice to stderr (the values themselves
+// are never logged).
+const PROVIDER_ENV_VARS = [
+  "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY",
+  "COHERE_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY",
+  "TOGETHER_API_KEY", "AZURE_OPENAI_KEY", "OPENAI_ORGANIZATION",
+];
+const OCR_ENV_VARS = [
+  "GOOGLE_APPLICATION_CREDENTIALS", "AZURE_AI_KEY",
+  "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+];
+
+function enforceProcessSecurity() {
+  const found = [];
+  for (const v of [...PROVIDER_ENV_VARS, ...OCR_ENV_VARS]) {
+    if (process.env[v] !== undefined) {
+      found.push(v);
+      delete process.env[v];
+    }
   }
-  const buf = Buffer.alloc(4 + payload.length);
-  buf.writeUInt32BE(payload.length, 0);
-  payload.copy(buf, 4);
-  return buf;
+  if (found.length > 0) {
+    process.stderr.write(
+      `[security] stripped ${found.length} disallowed env var(s): ${found.join(", ")}\n`,
+    );
+  }
 }
+
+enforceProcessSecurity();
 
 // Read all of stdin into a single Buffer.
 function readStdin() {

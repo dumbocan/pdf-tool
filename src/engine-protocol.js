@@ -55,6 +55,72 @@ export function parseFrame(buffer) {
   return { json: value, bytes: length };
 }
 
+// ---- Frame layer (frameResponse) — encode a JSON object as a 32-bit BE
+// length-prefixed UTF-8 payload, capped at MAX_RESPONSE_BYTES.
+// If serialization would exceed the cap, the `text` field is truncated
+// in-place on a shallow copy. If the payload still exceeds the cap, a
+// bounded error envelope is returned instead. (design §5.3)
+
+function encodeFrame(payload) {
+  const buf = Buffer.alloc(4 + payload.length);
+  buf.writeUInt32BE(payload.length, 0);
+  payload.copy(buf, 4);
+  return buf;
+}
+
+export function frameResponse(obj) {
+  let payload = Buffer.from(JSON.stringify(obj), "utf8");
+
+  if (payload.length <= MAX_RESPONSE_BYTES) {
+    return encodeFrame(payload);
+  }
+
+  // Payload exceeds cap: truncate the `text` field (typically the largest).
+  const copy = { ...obj };
+  if (typeof copy.text === "string" && copy.text.length > 0) {
+    const textBytes = Buffer.byteLength(copy.text, "utf8");
+    const overhead = payload.length - textBytes;
+    // Budget for text: leave 64 bytes of safety margin for JSON structure.
+    const maxTextBytes = Math.max(0, MAX_RESPONSE_BYTES - overhead - 64);
+
+    if (maxTextBytes > 0) {
+      // Binary search for the largest UTF-8-safe prefix that fits.
+      let lo = 0, hi = copy.text.length;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (Buffer.byteLength(copy.text.slice(0, mid), "utf8") <= maxTextBytes) {
+          lo = mid;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      copy.text = copy.text.slice(0, lo);
+    } else {
+      copy.text = "";
+    }
+
+    copy.truncated = true;
+    copy.truncation = { reason: "response_capped" };
+
+    payload = Buffer.from(JSON.stringify(copy), "utf8");
+    if (payload.length <= MAX_RESPONSE_BYTES) {
+      return encodeFrame(payload);
+    }
+  }
+
+  // Even after truncation the payload exceeds the cap — return a bounded
+  // error envelope whose size is guaranteed well under the limit.
+  const errObj = {
+    protocolVersion: 1,
+    kind: "extractLocal",
+    requestId: typeof obj.requestId === "string" ? obj.requestId : null,
+    status: "error",
+    error: "response_exceeds_limit",
+    message: "response capped at MAX_RESPONSE_BYTES",
+  };
+  return encodeFrame(Buffer.from(JSON.stringify(errObj), "utf8"));
+}
+
 // ---- Request layer ----
 
 function validateName(name) {
