@@ -42,7 +42,7 @@ pub trait Validate {
 // === Validation helpers (design §5.2–§5.4) ===
 
 fn is_lower_hex(c: u8) -> bool {
-    (c >= b'0' && c <= b'9') || (c >= b'a' && c <= b'f')
+    (b'0'..=b'9').contains(&c) || (b'a'..=b'f').contains(&c)
 }
 
 pub fn is_valid_uuid_v4(s: &str) -> bool {
@@ -50,12 +50,12 @@ pub fn is_valid_uuid_v4(s: &str) -> bool {
         return false;
     }
     let b = s.as_bytes();
-    for i in 0..UUID_V4_LEN {
+    for (i, &byte) in b.iter().enumerate() {
         match i {
-            8 | 13 | 18 | 23 => if b[i] != b'-' { return false; },
-            14 => if b[i] != b'4' { return false; },        // version nibble must be '4'
-            19 => if !matches!(b[i], b'8' | b'9' | b'a' | b'b') { return false; }, // variant
-            _ => if !is_lower_hex(b[i]) { return false; },
+            8 | 13 | 18 | 23 => if byte != b'-' { return false; },
+            14 => if byte != b'4' { return false; },        // version nibble must be '4'
+            19 => if !matches!(byte, b'8' | b'9' | b'a' | b'b') { return false; }, // variant
+            _ => if !is_lower_hex(byte) { return false; },
         }
     }
     true
@@ -64,9 +64,9 @@ pub fn is_valid_uuid_v4(s: &str) -> bool {
 pub fn is_valid_base64url_id(s: &str) -> bool {
     s.len() == DOCUMENT_ID_LEN
         && s.bytes().all(|b| {
-            (b >= b'A' && b <= b'Z')
-                || (b >= b'a' && b <= b'z')
-                || (b >= b'0' && b <= b'9')
+            (b'A'..=b'Z').contains(&b)
+                || (b'a'..=b'z').contains(&b)
+                || (b'0'..=b'9').contains(&b)
                 || b == b'-'
                 || b == b'_'
         })
@@ -82,14 +82,14 @@ pub fn is_valid_name(s: &str) -> bool {
 
 pub fn is_valid_base64(s: &str) -> bool {
     let len = s.len();
-    if len < MIN_BASE64_CHARS || len > MAX_BASE64_CHARS {
+    if !(MIN_BASE64_CHARS..=MAX_BASE64_CHARS).contains(&len) {
         return false;
     }
     let b = s.as_bytes();
     if !b.iter().all(|&c| {
-        (c >= b'A' && c <= b'Z')
-            || (c >= b'a' && c <= b'z')
-            || (c >= b'0' && c <= b'9')
+        (b'A'..=b'Z').contains(&c)
+            || (b'a'..=b'z').contains(&c)
+            || (b'0'..=b'9').contains(&c)
             || c == b'+'
             || c == b'/'
             || c == b'='
@@ -313,12 +313,12 @@ impl Validate for ExtractLocalV1 {
         }
         if let Some(opts) = &self.options {
             if let Some(mp) = opts.max_pages {
-                if mp < MIN_PAGES || mp > MAX_PAGES {
+                if !(MIN_PAGES..=MAX_PAGES).contains(&mp) {
                     return Err(ContractError::new("max_pages"));
                 }
             }
             if let Some(mc) = opts.max_chars {
-                if mc < MIN_CHARS || mc > MAX_CHARS {
+                if !(MIN_CHARS..=MAX_CHARS).contains(&mc) {
                     return Err(ContractError::new("max_chars"));
                 }
             }
@@ -434,6 +434,100 @@ pub enum ApiResult<T> {
         request_id: String,
         error: PublicError,
     },
+}
+
+// === Adapter layer (WU-1D2) ===
+// Converts ContractError into a PublicError, wrapping in ApiResult::Error.
+// On success, wraps the data in ApiResult::Ok.
+
+/// Trait for request DTOs that carry protocol_version + request_id.
+pub trait RequestEnvelope {
+    fn protocol_version(&self) -> u8;
+    fn request_id(&self) -> &str;
+}
+
+impl RequestEnvelope for RegisterDocumentV1 {
+    fn protocol_version(&self) -> u8 {
+        self.protocol_version
+    }
+    fn request_id(&self) -> &str {
+        &self.request_id
+    }
+}
+
+impl RequestEnvelope for ExtractLocalV1 {
+    fn protocol_version(&self) -> u8 {
+        self.protocol_version
+    }
+    fn request_id(&self) -> &str {
+        &self.request_id
+    }
+}
+
+impl RequestEnvelope for CancelOperationV1 {
+    fn protocol_version(&self) -> u8 {
+        self.protocol_version
+    }
+    fn request_id(&self) -> &str {
+        &self.request_id
+    }
+}
+
+/// Map a `ContractError` code to a `PublicErrorCode`.
+fn error_code_from_contract(code: &str) -> PublicErrorCode {
+    match code {
+        "protocol_version" => PublicErrorCode::ProtocolMismatch,
+        "request_id" => PublicErrorCode::InvalidRequest,
+        "document_id" => PublicErrorCode::InvalidRequest,
+        "invalid_name" => PublicErrorCode::InvalidRequest,
+        "declared_bytes" => PublicErrorCode::InputTooLarge,
+        "invalid_base64" => PublicErrorCode::InvalidRequest,
+        "max_pages" => PublicErrorCode::PageLimit,
+        "max_chars" => PublicErrorCode::PageLimit,
+        "operation_id" => PublicErrorCode::InvalidRequest,
+        "message_key_overflow" => PublicErrorCode::ResponseTooLarge,
+        "message_key_non_ascii" => PublicErrorCode::InvalidRequest,
+        "safe_context_unit_overflow" => PublicErrorCode::ResponseTooLarge,
+        "safe_context_capability_overflow" => PublicErrorCode::ResponseTooLarge,
+        _ => PublicErrorCode::InvalidRequest,
+    }
+}
+
+/// Validate a request and produce an `ApiResult::Error` if validation fails.
+pub fn validate_request<T: Validate + RequestEnvelope>(req: &T) -> Result<(), ApiResult<()>> {
+    match req.validate() {
+        Ok(()) => Ok(()),
+        Err(e) => Err(ApiResult::Error {
+            protocol_version: req.protocol_version(),
+            request_id: req.request_id().to_string(),
+            error: PublicError {
+                code: error_code_from_contract(e.code),
+                message_key: e.code.to_string(),
+                retry: RetryCategory::Never,
+                safe_context: None,
+            },
+        }),
+    }
+}
+
+/// Validate request, then on success wrap data in `ApiResult::Ok`; on failure wrap as `ApiResult::Error`.
+pub fn validate_and_wrap<T: Validate + RequestEnvelope, D>(
+    req: &T,
+    data: D,
+) -> ApiResult<D> {
+    match validate_request(req) {
+        Ok(()) => ApiResult::Ok {
+            protocol_version: req.protocol_version(),
+            request_id: req.request_id().to_string(),
+            data,
+        },
+        Err(ApiResult::Error { protocol_version, request_id, error }) => ApiResult::Error {
+            protocol_version,
+            request_id,
+            error,
+        },
+        _ => unreachable!(),
+    }
 }
 
 // === Tests ===
@@ -814,5 +908,106 @@ mod tests {
             }),
         };
         assert!(error.validate().is_err(), "overflowing safeContext.unit must be rejected");
+    }
+
+    // === Adapter layer tests (WU-1D2) ===
+
+    #[test]
+    fn adapter_valid_register_wraps_ok() {
+        let json = format!(
+            r#"{{"protocolVersion":1,"requestId":"{}","name":"invoice.pdf","declaredBytes":44,"pdfBase64":"AAAA"}}"#,
+            VALID_UUID
+        );
+        let req: RegisterDocumentV1 = serde_json::from_str(&json).unwrap();
+        let data = RegisteredDocumentV1 {
+            document_id: VALID_DOC_ID.to_string(),
+            display_name: "invoice.pdf".to_string(),
+            byte_length: 44,
+        };
+        let result = validate_and_wrap(&req, data);
+        match result {
+            ApiResult::Ok { protocol_version, request_id, data: _ } => {
+                assert_eq!(protocol_version, 1);
+                assert_eq!(request_id, VALID_UUID);
+            }
+            ApiResult::Error { .. } => panic!("valid request must produce Ok"),
+        }
+    }
+
+    #[test]
+    fn adapter_invalid_register_wraps_error() {
+        let json = format!(
+            r#"{{"protocolVersion":1,"requestId":"{}","name":"invoice.pdf","declaredBytes":0,"pdfBase64":"AAAA"}}"#,
+            VALID_UUID
+        );
+        let req: RegisterDocumentV1 = serde_json::from_str(&json).unwrap();
+        let data = RegisteredDocumentV1 {
+            document_id: VALID_DOC_ID.to_string(),
+            display_name: "invoice.pdf".to_string(),
+            byte_length: 0,
+        };
+        let result = validate_and_wrap(&req, data);
+        match result {
+            ApiResult::Ok { .. } => panic!("invalid request must produce Error"),
+            ApiResult::Error { protocol_version, request_id, error } => {
+                assert_eq!(protocol_version, 1);
+                assert_eq!(request_id, VALID_UUID);
+                assert_eq!(error.code, PublicErrorCode::InputTooLarge);
+                assert_eq!(error.message_key, "declared_bytes");
+            }
+        }
+    }
+
+    #[test]
+    fn adapter_invalid_extract_wraps_error_with_request_id() {
+        let json = format!(
+            r#"{{"protocolVersion":2,"requestId":"{}","documentId":"{}"}}"#,
+            VALID_UUID, VALID_DOC_ID
+        );
+        let req: ExtractLocalV1 = serde_json::from_str(&json).unwrap();
+        let data = LocalExtractionV1 {
+            provenance: "local".to_string(),
+            document_sha256: "a".repeat(SHA256_LEN),
+            status: ExtractionStatus::Complete,
+            pages_processed: 1,
+            truncation_reason: None,
+            extraction_mode: ExtractionMode::DigitalText,
+            invoice: InvoiceFieldsV1 {
+                invoice_number: None,
+                invoice_date: None,
+                simplified_invoice_date: None,
+                tax_label: None,
+                totals: InvoiceTotalsV1 { subtotal: None, tax: None, total: None },
+                matched: vec![],
+            },
+            untrusted: false,
+        };
+        let result = validate_and_wrap(&req, data);
+        match result {
+            ApiResult::Error { error, .. } => {
+                assert_eq!(error.code, PublicErrorCode::ProtocolMismatch);
+                assert_eq!(error.message_key, "protocol_version");
+            }
+            _ => panic!("expected Error for bad protocol version"),
+        }
+    }
+
+    #[test]
+    fn adapter_validate_request_ok_for_valid_extract() {
+        let json = format!(
+            r#"{{"protocolVersion":1,"requestId":"{}","documentId":"{}"}}"#,
+            VALID_UUID, VALID_DOC_ID
+        );
+        let req: ExtractLocalV1 = serde_json::from_str(&json).unwrap();
+        assert!(validate_request(&req).is_ok());
+    }
+
+    #[test]
+    fn adapter_error_code_mapping() {
+        assert_eq!(error_code_from_contract("protocol_version"), PublicErrorCode::ProtocolMismatch);
+        assert_eq!(error_code_from_contract("declared_bytes"), PublicErrorCode::InputTooLarge);
+        assert_eq!(error_code_from_contract("max_pages"), PublicErrorCode::PageLimit);
+        assert_eq!(error_code_from_contract("invalid_name"), PublicErrorCode::InvalidRequest);
+        assert_eq!(error_code_from_contract("unknown"), PublicErrorCode::InvalidRequest);
     }
 }
