@@ -82,6 +82,25 @@ These requirements apply to **every** implementation work unit below.
 - OpenClaw live after WU-1A3 creates the safe script: `docker compose -f /home/jmon/openclaw/docker-compose2.yml ps pdf-tool laia-imap-sidecar`; `docker inspect --format '{{.State.Health.Status}}' "$(docker compose -f /home/jmon/openclaw/docker-compose2.yml ps -q pdf-tool)"`; `docker compose -f /home/jmon/openclaw/docker-compose2.yml exec -T laia-imap-sidecar node --input-type=module < test/fixtures/openclaw-live-smoke.mjs`.
 - Visual runtime after WU-1A1: start with `pnpm --dir apps/nelupdf dev --host 127.0.0.1`; invoke the runtime `vui-smoke` actor against `http://127.0.0.1:1420` using `apps/nelupdf/test/visual/<unit>.scenario.json`; capture screenshots, semantic readback, keyboard/focus results, console, and network attempts. Direct Playwright MCP is not an accepted substitute.
 
+## Foolproof per-WU continuation contract
+
+Use this contract for every continuation, even when a prompt or older progress entry sounds broader.
+
+1. Read, in order: the newest resumption summary, this contract, the selected WU definition, the newest generation block, and the final Immediate apply boundary. Newer explicit boundaries override stale historical “next” text; history remains evidence, not authority.
+2. Select exactly one WU named by the Immediate apply boundary. Never infer authorization from dependencies being complete, checked rows, candidate lists, or a future WU appearing next in this file.
+3. Confirm every dependency and parent-owned verification/settlement named for that WU is closed. If any proof is missing or contradictory, stop and return the missing fact; do not guess.
+4. Before work, create a continuation packet from the canonical template in `apply-progress.md`. It must name the exact allowed edit root/files, forbidden surfaces, existing dirty paths, line budget, checks, and hard stop.
+5. Preserve all pre-existing tracked and untracked work. Read each allowed target before editing; never stage, reset, clean, checkout, commit, push, open a PR, publish, release, or mutate review/RDD state unless a later human authorization explicitly names that exact action.
+6. Candidate lists are maximum possible scope, not permission to edit every candidate. Touch only files required by the observed RED and explicitly allowed by the continuation packet.
+7. Follow strict TDD for behavior work: capture a meaningful behavior RED first, make the minimum GREEN change, TRIANGULATE a material boundary/negative case, then REFACTOR only while focused checks remain green. Never relabel characterization, compilation, or an unavailable check as RED or PASS.
+8. Documentation-only closure is a justified no-RED exception. It may change only its named documentation/memory surfaces and must run structural readback plus `git diff --check`; it must not run product tests merely to manufacture TDD evidence.
+9. Run focused checks before broader authorized checks. Record exact command, exit status, counts, runtime context, typed unavailable evidence, and any non-green result without concealment.
+10. Treat OpenClaw as read-only unless the selected WU and a later explicit authorization both require mutation. Never expose credentials, tokens, mail, invoice content, or private payloads in commands, logs, fixtures, docs, or memory.
+11. Re-run the four scope commands from the Program-wide apply protocol and `git diff --check`. The effective budget is `max(native changed_lines, real authored lines)`. Real authored lines MUST include: tracked files via `git diff --numstat`; untracked candidate files counted explicitly as additions/deletions; tasks.md and apply-progress.md. Exclude only lockfiles, generated fixtures, or artifacts when the SDD explicitly justifies it. The native ledger remains mandatory but is not the sole control when it omits untracked files. Record BOTH figures at start and at close; if either reaches the WU budget (WU-1B2 = 390), stop and split. Report unexplained drift instead of repairing unrelated files.
+12. Update only the selected WU rows and append one bounded generation block. Never rewrite historical generations; factual corrections require exact parent authorization and must be called out.
+13. Return the continuation packet, RED/GREEN/TRIANGULATE/REFACTOR evidence, structural/runtime readback, exact scope/modes, line accounting, row truth, rollback, risks, and next hard stop. Mirror canonical tasks/progress in Engram without overwriting the handoff topic.
+14. Stop after the selected WU. The following WU remains unauthorized until parent independent verification and native settlement close the current candidate and the human or parent explicitly selects the next boundary.
+
 ## Slice 1 — Harness, Rust boundary, deterministic local extraction
 
 ### WU-1A1 — NEXT: frontend/component/a11y and visual seam
@@ -99,64 +118,89 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 
 **Depends on:** WU-1A1. **Candidates:** `apps/nelupdf/src-tauri/Cargo.toml`, `apps/nelupdf/src-tauri/Cargo.lock`, `apps/nelupdf/src-tauri/src/lib.rs`, `apps/nelupdf/src-tauri/src/test_support.rs`. **Acceptance:** `cargo test` can exercise pure DTO/service tests without launching a GUI; no production extraction command is added; installed Cargo/Tauri versions are recorded. **Rollback:** remove only test-only modules/dependencies and restore manifest/lock hunks.
 
-- [ ] `WU-1A2-RED` Add a minimal test-only contract placeholder and record `cargo test --manifest-path apps/nelupdf/src-tauri/Cargo.toml contract_test_seam` failing because the seam is absent. <!-- sdd-owner: implementation -->
-- [ ] `WU-1A2-GREEN` Add the smallest `cfg(test)` seam and make the focused test, full Cargo test, Cargo check, and format check pass. <!-- sdd-owner: implementation -->
-- [ ] `WU-1A2-TRIANGULATE` Prove tests can inject deterministic IDs/clocks without exposing those controls in production; keep real Tauri APIs compile-checked. <!-- sdd-owner: implementation -->
-- [ ] `WU-1A2-REFACTOR` Remove unused template test helpers, capture unchanged `vui-smoke` baseline, and complete scope/lockfile evidence within 180 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1A2-RED` Add a minimal test-only contract placeholder and record `cargo test --manifest-path apps/nelupdf/src-tauri/Cargo.toml contract_test_seam` failing because the seam is absent. <!-- sdd-owner: implementation -->
+- [x] `WU-1A2-GREEN` Add the smallest `cfg(test)` seam and make the focused test, full Cargo test, Cargo check, and format check pass. <!-- sdd-owner: implementation -->
+- [x] `WU-1A2-TRIANGULATE` Prove tests can inject deterministic IDs/clocks without exposing those controls in production; keep real Tauri APIs compile-checked. <!-- sdd-owner: implementation -->
+- [x] `WU-1A2-REFACTOR` Remove unused template test helpers, capture unchanged `vui-smoke` baseline, and complete scope/lockfile evidence within 180 lines. <!-- sdd-owner: implementation -->
+
+### WU-1A3-PRE — hash-locked pseudonymization baseline import
+
+**Separate prerequisite only:** this imports an already-inspected baseline; it grants no WU-1A3 product-development permission.
+**OUTCOME:** the exact authorized pseudonymizer and characterization test exist in the isolated worktree with provenance and no behavior edits.
+**START ONLY IF:** WU-1A2 is independently verified/natively complete and both dirty-root sources match their authorized hashes, line counts, and byte sizes.
+**ALLOWED FILES:** `src/pseudonymize.js`, `test/pseudonymize.test.js`, this `tasks.md`, and cumulative `apply-progress.md` only.
+**NEVER TOUCH:** OpenClaw, WU-1A2 candidate bytes, WU-1A3/WU-1A4 behavior, delivery state, or any other path.
+**LINE LIMIT 280:** count all authored additions plus deletions, including task/progress evidence; stop before exceeding it.
+**STRUCTURAL RED:** before copy, the exact focused stable test MUST exit nonzero because its file is absent; this proves PRE provenance only.
+**GREEN:** copy both authorized files byte-for-byte, normalize only to regular non-executable mode `100644`, verify exact hashes, and pass the focused stable test.
+**TRIANGULATE:** pass focused reverse/masking wiring tests, then run the imported file once as characterization; preserve any randomized failure without claiming stability.
+**REFACTOR:** no source/test refactor is allowed; recheck hashes, sizes, modes, imports, secret assignments, scope, `git diff --check`, and line budget.
+**EXACT COMMANDS/EXPECTED RESULTS:** RED/GREEN use `node --test --test-name-pattern='PII identifiers replaced consistently across multiple occurrences' test/pseudonymize.test.js` (absent/nonzero, then 1/1 pass); TRIANGULATE runs focused reverse/masking tests and `node --test test/pseudonymize.test.js` once; never run the WU-1A3 50-loop command.
+**INVALID RED:** any pass-before-copy, different failure after the file exists, behavioral assertion, source/test mutation, or WU-1A3 randomized-gate execution is invalid.
+**ENGRAM SAVES:** persist distinct PRE preflight, RED, GREEN, TRIANGULATE, REFACTOR, and closure checkpoints plus canonical tasks/progress updates; never overwrite the handoff topic.
+**ROLLBACK:** remove only the two imported files and PRE task/progress hunks; preserve all WU-1A1/WU-1A2 history and unrelated work.
+**DONE ONLY WHEN:** every PRE gate passes, the four PRE rows are checked in both stores, exact revisions/accounting are recorded, and parent independent verification/native settlement is requested.
+**NEXT WU/HARD STOP:** parent lifecycle verifies/settles PRE; only then may WU-1A3 be separately started. Do not start WU-1A4 or WU-1B1.
+
+- [x] `WU-1A3-PRE-RED` Capture the valid absent-file structural RED before copying either authorized baseline file. <!-- sdd-owner: implementation -->
+- [x] `WU-1A3-PRE-GREEN` Import both hash-locked files byte-for-byte and pass the exact focused stable test. <!-- sdd-owner: implementation -->
+- [x] `WU-1A3-PRE-TRIANGULATE` Pass focused reverse/masking wiring tests and characterize the full imported file exactly once without a stability claim. <!-- sdd-owner: implementation -->
+- [x] `WU-1A3-PRE-REFACTOR` Make no source/test refactor; complete integrity, security, scope, mode, process, and line-budget checks. <!-- sdd-owner: implementation -->
 
 ### WU-1A3 — Node/OpenClaw characterization and randomized-baseline gate
 
 **Depends on:** WU-1A2. **Candidates:** `test/pseudonymize.test.js`, `test/mcp-facade.test.js`, `test/openclaw-compat.test.js`, `test/fixtures/openclaw-live-smoke.mjs`; product candidates are forbidden unless a separate RED proves they are required. **Acceptance:** run the randomized assertion repeatedly; either stabilize test inputs/assertions without changing product behavior or mark the test isolated and block green-suite claims; characterize `/mcp`, initialize/list, all three legacy names/schemas, and live `laia-imap-sidecar` wiring. **Rollback:** revert only test/fixture changes; never modify `/home/jmon/openclaw`.
 
-- [ ] `WU-1A3-RED` Run `for i in $(seq 1 50); do node --test --test-name-pattern='amounts mapped affinely preserving arithmetic' test/pseudonymize.test.js || exit 1; done` and record the first reproducible failure/seed evidence without repairing unrelated product code. <!-- sdd-owner: implementation -->
-- [ ] `WU-1A3-GREEN` Make the randomized test deterministic only at its test seam, or record explicit isolation and create a separately scoped dependency task if production behavior is truly defective. <!-- sdd-owner: implementation -->
-- [ ] `WU-1A3-TRIANGULATE` Add static and live OpenClaw contract checks, then run the canonical OpenClaw focused, sidecar, health, and stdin smoke commands; require the three exact tool names and schemas. <!-- sdd-owner: implementation -->
-- [ ] `WU-1A3-REFACTOR` Keep fixtures credential-free/content-safe, capture unchanged visual baseline and candidate scope, and forbid any green-regression claim unless the randomized gate is trustworthy. <!-- sdd-owner: implementation -->
+- [x] `WU-1A3-RED` Run `for i in $(seq 1 50); do node --test --test-name-pattern='amounts mapped affinely preserving arithmetic' test/pseudonymize.test.js || exit 1; done` and record the first reproducible failure/seed evidence without repairing unrelated product code. <!-- sdd-owner: implementation -->
+- [x] `WU-1A3-GREEN` Make the randomized test deterministic only at its test seam, or record explicit isolation and create a separately scoped dependency task if production behavior is truly defective. <!-- sdd-owner: implementation -->
+- [x] `WU-1A3-TRIANGULATE` Add static and live OpenClaw contract checks, then run the canonical OpenClaw focused, sidecar, health, and stdin smoke commands; require the three exact tool names and schemas. <!-- sdd-owner: implementation -->
+- [x] `WU-1A3-REFACTOR` Keep fixtures credential-free/content-safe, capture unchanged visual baseline and candidate scope, and forbid any green-regression claim unless the randomized gate is trustworthy. <!-- sdd-owner: implementation -->
 
 ### WU-1A4 — CI seam inventory without behavior rollout
 
 **Depends on:** WU-1A3. **Candidates:** `.github/workflows/ci.yml`, `apps/nelupdf/package.json`, `apps/nelupdf/src-tauri/Cargo.toml`. **Acceptance:** CI commands for frontend, a11y, TypeScript, Rust, and existing Node checks are defined but no unavailable boundary/E2E check is misrepresented as passing; `vui-smoke` remains runtime evidence, not fake CI E2E. **Rollback:** restore only CI/script hunks.
 
-- [ ] `WU-1A4-RED` Add a CI validation expectation and record its failure because desktop jobs/scripts are absent. <!-- sdd-owner: implementation -->
-- [ ] `WU-1A4-GREEN` Add install/cache/test/check stages using `pnpm --frozen-lockfile`, Cargo, and existing npm commands; keep boundary/package jobs explicitly pending. <!-- sdd-owner: implementation -->
-- [ ] `WU-1A4-TRIANGULATE` Prove a deliberately failing frontend and Rust test would fail their jobs, then restore green bytes; do not disable the randomized baseline gate. <!-- sdd-owner: implementation -->
-- [ ] `WU-1A4-REFACTOR` Remove duplicated installs, run workflow structural readback plus all local canonical checks, capture visual/scope evidence, and stay within 160 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1A4-RED` Add a CI validation expectation and record its failure because desktop jobs/scripts are absent. <!-- sdd-owner: implementation -->
+- [x] `WU-1A4-GREEN` Add install/cache/test/check stages using `pnpm --frozen-lockfile`, Cargo, and existing npm commands; keep boundary/package jobs explicitly pending. <!-- sdd-owner: implementation -->
+- [x] `WU-1A4-TRIANGULATE` Prove a deliberately failing frontend and Rust test would fail their jobs, then restore green bytes; do not disable the randomized baseline gate. <!-- sdd-owner: implementation -->
+- [x] `WU-1A4-REFACTOR` Remove duplicated installs, run workflow structural readback plus all local canonical checks, capture visual/scope evidence, and stay within 160 lines. <!-- sdd-owner: implementation -->
 
 ### WU-1B1 — Freeze OpenClaw/MCP compatibility contract
 
 **Depends on:** WU-1A4. **Candidates:** `test/mcp-facade.test.js`, `test/openclaw-compat.test.js`, `test/fixtures/openclaw-tools-v1.json`, `docs/migrations/openclaw-mcp-v1.md`. **Acceptance:** exact `/mcp` session behavior, tool names, schemas, deterministic base64 result meaning, and live internal network are executable gates; path/LLM security changes are documented as future versioned migrations, not silently applied. **Rollback:** remove only contract fixture/docs/tests.
 
-- [ ] `WU-1B1-RED` Add a contract test that fails on renamed/removed tools or schema drift and record the expected failure against a deliberately mutated fixture. <!-- sdd-owner: implementation -->
-- [ ] `WU-1B1-GREEN` Generate/curate the fixture from current verified behavior and make `node --test test/mcp-facade.test.js test/openclaw-compat.test.js` pass. <!-- sdd-owner: implementation -->
-- [ ] `WU-1B1-TRIANGULATE` Exercise initialize, `tools/list`, session reuse, deterministic base64 call, and all three tool declarations from `laia-imap-sidecar`; require healthy `pdf-tool`. <!-- sdd-owner: implementation -->
-- [ ] `WU-1B1-REFACTOR` Keep the fixture stable and content-free, run visual/scope evidence, and reject use of the historical `services/pdf-tool-sidecar` directory. <!-- sdd-owner: implementation -->
+- [x] `WU-1B1-RED` Add a contract test that fails on renamed/removed tools or schema drift and record the expected failure against a deliberately mutated fixture. <!-- sdd-owner: implementation -->
+- [x] `WU-1B1-GREEN` Generate/curate the fixture from current verified behavior and make `node --test test/mcp-facade.test.js test/openclaw-compat.test.js` pass. <!-- sdd-owner: implementation -->
+- [x] `WU-1B1-TRIANGULATE` Exercise initialize, `tools/list`, session reuse, deterministic base64 call, and all three tool declarations from `laia-imap-sidecar`; require healthy `pdf-tool`. <!-- sdd-owner: implementation -->
+- [x] `WU-1B1-REFACTOR` Keep the fixture stable and content-free, run visual/scope evidence, and reject use of the historical `services/pdf-tool-sidecar` directory. <!-- sdd-owner: implementation -->
 
 ### WU-1B2 — HTTP Origin/auth/CORS pre-document closure
 
 **Depends on:** WU-1B1. **Candidates:** `src/server.js`, `test/server.test.js`. **Acceptance:** exact canonical origin allowlist, fail-closed 43-character base64url bearer requirement, preflight matrix, no wildcard/credentials, and rejection before body/extractor/provider work; `/healthz`, `/version`, `/mcp` compatibility behavior is explicitly tested rather than accidentally blocked. **Rollback:** revert server/test hunks; if safe rollback is impossible, disable document HTTP routes rather than restore permissive behavior.
 
-- [ ] `WU-1B2-RED` Add trusted/untrusted/missing/opaque/`null` origin and missing/invalid/valid auth tests with body/extractor/provider sentinels; record focused failures. <!-- sdd-owner: implementation -->
-- [ ] `WU-1B2-GREEN` Implement the minimal pre-route policy and make `node --test test/server.test.js` pass without weakening `/mcp` or content-free health/version behavior. <!-- sdd-owner: implementation -->
-- [ ] `WU-1B2-TRIANGULATE` Add malformed/multiple origin, exact CORS header, disallowed preflight, and no-sensitive-echo cases; run all OpenClaw static/live commands. <!-- sdd-owner: implementation -->
-- [ ] `WU-1B2-REFACTOR` Isolate policy parsing from route logic, run full root tests and unchanged visual smoke, and capture scope within 390 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1B2-RED` Add trusted/untrusted/missing/opaque/`null` origin and missing/invalid/valid auth tests with body/extractor/provider sentinels; record focused failures. <!-- sdd-owner: implementation -->
+- [x] `WU-1B2-GREEN` Implement the minimal pre-route policy and make `node --test test/server.test.js` pass without weakening `/mcp` or content-free health/version behavior. <!-- sdd-owner: implementation -->
+- [x] `WU-1B2-TRIANGULATE` Add malformed/multiple origin, exact CORS header, disallowed preflight, and no-sensitive-echo cases; run all OpenClaw static/live commands. <!-- sdd-owner: implementation -->
+- [x] `WU-1B2-REFACTOR` Isolate policy parsing from route logic, run full root tests and unchanged visual smoke, and capture scope within 390 lines. <!-- sdd-owner: implementation -->
 
 ### WU-1B3 — Versioned unsafe-path migration
 
 **Depends on:** WU-1B2. **Candidates:** `src/server.js`, `src/mcp-facade.js`, `test/server.test.js`, `test/mcp-facade.test.js`, `docs/migrations/openclaw-mcp-v1.md`, OpenClaw files are read-only discovery targets. **Acceptance:** `/extract-path` cannot read before authority and returns `unsafe_path_contract_removed_v1`; MCP `extract_pdf_from_path` remains listed with its frozen schema and either remains workspace-bounded under approved compatibility or returns the explicit versioned migration result; `laia-imap-sidecar` base64 extraction remains live. **Rollback:** preserve the safer policy; disable the affected route/tool rather than restore arbitrary reads.
 
-- [ ] `WU-1B3-RED` Add filesystem spies for HTTP/MCP path branches, workspace escape/symlink cases, stable error code, tool-list preservation, and live consumer expectations; record focused failures. <!-- sdd-owner: implementation -->
-- [ ] `WU-1B3-GREEN` Implement the smallest security-monotonic migration without changing tool names/schemas or the safe base64 path. <!-- sdd-owner: implementation -->
-- [ ] `WU-1B3-TRIANGULATE` Test no stat/realpath/read on rejected inputs, explicit migration guidance, OpenClaw initialize/list/base64 extraction, and any approved path-consumer migration. <!-- sdd-owner: implementation -->
-- [ ] `WU-1B3-REFACTOR` Centralize the stable migration envelope, run focused/full/OpenClaw/visual checks, and record rollback plus scope within 360 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1B3-RED` Add filesystem spies for HTTP/MCP path branches, workspace escape/symlink cases, stable error code, tool-list preservation, and live consumer expectations; record focused failures. <!-- sdd-owner: implementation -->
+- [x] `WU-1B3-GREEN` Implement the smallest security-monotonic migration without changing tool names/schemas or the safe base64 path. <!-- sdd-owner: implementation -->
+- [x] `WU-1B3-TRIANGULATE` Test no stat/realpath/read on rejected inputs, explicit migration guidance, OpenClaw initialize/list/base64 extraction, and any approved path-consumer migration. <!-- sdd-owner: implementation -->
+- [x] `WU-1B3-REFACTOR` Centralize the stable migration envelope, run focused/full/OpenClaw/visual checks, and record rollback plus scope within 360 lines. <!-- sdd-owner: implementation -->
 
 ### WU-1C1 — Node framed-stdio parser and closed request contract
 
 **Depends on:** WU-1B3. **Candidates:** `src/engine-protocol.js`, `test/engine-protocol.test.js`, `test/fixtures/engine-protocol/*.json`. **Acceptance:** 32-bit big-endian framing, exact request/base64/decoded/hash/limit validation, one JSON value, EOF/trailing-data rejection, and 17,825,792-byte request cap are tested independently of extraction. **Rollback:** remove the additive protocol module/tests/fixtures.
 
-- [ ] `WU-1C1-RED` Write malformed, zero, overflow, under-read, over-read, trailing, UTF-8/JSON, base64, hash, and boundary-size tests before the parser exists. <!-- sdd-owner: implementation -->
-- [ ] `WU-1C1-GREEN` Implement only bounded frame/request parsing and make `node --test test/engine-protocol.test.js` pass. <!-- sdd-owner: implementation -->
-- [ ] `WU-1C1-TRIANGULATE` Add exact-max/exact-max-plus-one and unknown-field/version cases plus allocation guards. <!-- sdd-owner: implementation -->
-- [ ] `WU-1C1-REFACTOR` Keep I/O separate from domain extraction, run root/OpenClaw/visual/scope checks, and stay within 360 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1C1-RED` Write malformed, zero, overflow, under-read, over-read, trailing, UTF-8/JSON, base64, hash, and boundary-size tests before the parser exists. <!-- sdd-owner: implementation -->
+- [x] `WU-1C1-GREEN` Implement only bounded frame/request parsing and make `node --test test/engine-protocol.test.js` pass. <!-- sdd-owner: implementation -->
+- [x] `WU-1C1-TRIANGULATE` Add exact-max/exact-max-plus-one and unknown-field/version cases plus allocation guards. <!-- sdd-owner: implementation -->
+- [x] `WU-1C1-REFACTOR` Keep I/O separate from domain extraction, run root/OpenClaw/visual/scope checks, and stay within 360 lines. <!-- sdd-owner: implementation -->
+- Evidence: 12/12 engine-protocol tests pass; root suite 153/153 pass; `git diff --check` exit 0; 164+151+~44=359 lines within 360 budget. Real SHA-256 hash validation (not the old `Buffer.from(JSON.stringify({data})).toString("base64").slice(0,32)` algorithm). parseFrame (I/O) vs validateRequest (domain) separated.
 
 ### WU-1C2 — Node stdio extraction adapter reusing the existing engine
 
@@ -611,4 +655,16 @@ These actions occur only after an implementation work unit returns its internal 
 
 ## Immediate apply boundary
 
-Only **WU-1A1** is selected for the next apply. Stop after its GREEN/TRIANGULATE/REFACTOR evidence and return the exact candidate scope, authored changed-line count, commands/results, `vui-smoke` screenshots/readback, rollback boundary, and risks. Do not begin WU-1A2, edit product extraction behavior, touch OpenClaw files, create a commit, or open a PR in that apply.
+The documentation-only guardrail closure is complete. **WU-1A4 is the only next authorized implementation unit** in `/home/jmon/.pdf-tool-wu1a1`; its four rows remain `[ ]` until its own strict-TDD evidence is observed. Stop after WU-1A4 and return its complete continuation packet and evidence. **Hard stop before WU-1B1 and every later unit.** Do not mutate OpenClaw, delivery/Git state, review/RDD state, or any surface outside the WU-1A4 continuation packet.
+
+## Immediate apply boundary (post WU-1A4)
+
+WU-1A4 is closed (independent verification plus native settlement `state: complete`). **WU-1B1 is the only next authorized implementation unit** in `/home/jmon/.pdf-tool-wu1a1`; its four rows remain `[ ]` until its own strict-TDD evidence is observed. Stop after WU-1B1 and return its complete continuation packet and evidence. **Hard stop before WU-1B2 and every later unit.** Do not mutate OpenClaw, delivery/Git state, review/RDD state, or any surface outside the WU-1B1 continuation packet.
+
+## Immediate apply boundary (post WU-1B1)
+
+WU-1B1 is closed (independent verification plus native settlement `state: complete`; evidence revision `sha256:905336dabe6142dd7cdd5ef8a2619304712cabab2b81b4a2661f65b69b6741a8`). **WU-1B2 is the only next authorized implementation unit** in `/home/jmon/.pdf-tool-wu1a1`; its four rows remain `[ ]` until its own strict-TDD evidence is observed. **WU-1B3 and every later unit remain blocked and unauthorized.** Stop after WU-1B2 and return its complete continuation packet and evidence. Do not mutate OpenClaw, delivery/Git state, review/RDD state, or any surface outside the WU-1B2 continuation packet.
+
+## Immediate apply boundary (post WU-1B2)
+
+WU-1B2 is closed (independent verification plus native settlement `state: complete`; evidence manifest `sha256:6421276bc5bc6773d495640b93b4262f372591d0e0ccb2725578fbef32774a59`). **WU-1B3 is the only next authorized implementation unit** in `/home/jmon/.pdf-tool-wu1a1`; its four rows remain `[ ]` until its own strict-TDD evidence is observed. **WU-1B4 and every later unit remain blocked and unauthorized.** Stop after WU-1B3 and return its complete continuation packet and evidence. Do not mutate OpenClaw, delivery/Git state, review/RDD state, or any surface outside the WU-1B3 continuation packet.

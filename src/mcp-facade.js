@@ -25,6 +25,20 @@ const MAX_MCP_REQUEST_BODY_BYTES = 16 * 1024 * 1024;
 const LLM_MAX_PROMPT_CHARS = 16_000;
 const LLM_MAX_TOKENS = 16_000;
 
+// Versioned migration envelope for removed arbitrary-path document authority.
+// The HTTP /extract-path route and the MCP path tools return this exact payload
+// before any stat/realpath/readFile/extraction work. The frozen tool names and
+// schemas stay listed so consumers see an explicit typed result rather than a
+// vanished tool.
+export const UNSAFE_PATH_MIGRATION = Object.freeze({
+  error: "unsafe_path_contract_removed_v1",
+  guidance:
+    "Arbitrary path-based document extraction is removed in this version. " +
+    "Upload PDF bytes instead (HTTP POST /extract with base64 data, or MCP " +
+    "extract_pdf_from_base64); a versioned workspace/capability contract may " +
+    "restore workspace-bounded path access in a future release.",
+});
+
 class HttpBodyTooLargeError extends Error {
   constructor() {
     super("HTTP request body too large");
@@ -33,7 +47,9 @@ class HttpBodyTooLargeError extends Error {
 }
 
 function resolveWorkspaceRoot(value) {
-  return path.resolve(value || process.env.WORKSPACE_ROOT || "/home/node/.openclaw/workspace");
+  return path.resolve(
+    value || process.env.WORKSPACE_ROOT || "/home/node/.openclaw/workspace",
+  );
 }
 
 function assertInsideWorkspace(workspaceRoot, targetPath) {
@@ -68,7 +84,10 @@ async function readPdfFromPath(pathValue) {
   return buffer;
 }
 
-async function readBoundedJsonBody(request, maxBytes = MAX_MCP_REQUEST_BODY_BYTES) {
+async function readBoundedJsonBody(
+  request,
+  maxBytes = MAX_MCP_REQUEST_BODY_BYTES,
+) {
   const chunks = [];
   let total = 0;
   for await (const chunk of request) {
@@ -102,7 +121,19 @@ function failureEnvelope(tool, error, extra = {}) {
     typeof error?.message === "string" && error.message
       ? error.message
       : "PDF extraction tool is unavailable.";
-  return { content: [{ type: "text", text: JSON.stringify({ error: message }) }], isError: true };
+  return {
+    content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+    isError: true,
+  };
+}
+
+// Shared MCP result shape for the removed arbitrary-path tools. Emits the
+// versioned migration envelope without logging or echoing the supplied path.
+function unsafePathMigrationResult() {
+  return {
+    content: [{ type: "text", text: JSON.stringify(UNSAFE_PATH_MIGRATION) }],
+    isError: true,
+  };
 }
 
 export function createMcpFacade({
@@ -120,7 +151,11 @@ export function createMcpFacade({
     if (authToken) headers.authorization = `Bearer ${authToken}`;
     let response;
     try {
-      response = await fetchImpl(url, { method: "POST", headers, body: JSON.stringify(body) });
+      response = await fetchImpl(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
     } catch {
       const error = new Error("pdf-tool REST endpoint is unreachable");
       error.status = 502;
@@ -134,7 +169,9 @@ export function createMcpFacade({
     }
     if (!response.ok) {
       const message =
-        payload && typeof payload === "object" && typeof payload.error === "string"
+        payload &&
+        typeof payload === "object" &&
+        typeof payload.error === "string"
           ? payload.error
           : `pdf-tool REST endpoint failed (${response.status})`;
       const error = new Error(message);
@@ -163,20 +200,10 @@ export function createMcpFacade({
           maxChars: z.number().int().min(1).max(HARD_MAX_CHARS).optional(),
         }),
       },
-      async (input) => {
-        try {
-          const resolved = assertInsideWorkspace(workspaceRoot, input.path);
-          const buffer = await readPdfFromPath(resolved);
-          const body = { data: buffer.toString("base64") };
-          if (input.maxPages !== undefined) body.maxPages = input.maxPages;
-          if (input.maxChars !== undefined) body.maxChars = input.maxChars;
-          const result = await callRest(extractUrl, body);
-          return { content: [{ type: "text", text: JSON.stringify(result) }] };
-        } catch (error) {
-          return failureEnvelope("extract_pdf_from_path", error, {
-            path: typeof input?.path === "string" ? input.path : null,
-          });
-        }
+      async () => {
+        // Removed arbitrary path authority (versioned migration): return the
+        // typed result before any workspace resolution or filesystem access.
+        return unsafePathMigrationResult();
       },
     );
 
@@ -225,20 +252,10 @@ export function createMcpFacade({
           maxTokens: z.number().int().min(256).max(LLM_MAX_TOKENS).optional(),
         }),
       },
-      async (input) => {
-        try {
-          const resolved = assertInsideWorkspace(workspaceRoot, input.path);
-          const buffer = await readPdfFromPath(resolved);
-          const body = { data: buffer.toString("base64"), name: path.basename(resolved) };
-          if (input.prompt !== undefined) body.prompt = input.prompt;
-          if (input.maxTokens !== undefined) body.maxTokens = input.maxTokens;
-          const result = await callRest(llmExtractUrl, body);
-          return { content: [{ type: "text", text: JSON.stringify(result) }] };
-        } catch (error) {
-          return failureEnvelope("extract_pdf_with_llm", error, {
-            path: typeof input?.path === "string" ? input.path : null,
-          });
-        }
+      async () => {
+        // Removed arbitrary path authority (versioned migration): return the
+        // typed result before any workspace resolution or filesystem access.
+        return unsafePathMigrationResult();
       },
     );
 
@@ -262,7 +279,8 @@ export function createMcpFacade({
           sessionIdGenerator: randomUUID,
           onsessioninitialized: (id) => sessions.set(id, transport),
         });
-        transport.onclose = () => transport.sessionId && sessions.delete(transport.sessionId);
+        transport.onclose = () =>
+          transport.sessionId && sessions.delete(transport.sessionId);
         await buildMcpServer().connect(transport);
         return transport.handleRequest(request, response, body);
       }
@@ -270,7 +288,10 @@ export function createMcpFacade({
     } catch (error) {
       if (error instanceof HttpBodyTooLargeError) {
         console.error(
-          JSON.stringify({ event: "pdf_tool_body_too_large", error: error.constructor.name }),
+          JSON.stringify({
+            event: "pdf_tool_body_too_large",
+            error: error.constructor.name,
+          }),
         );
         return response.writeHead(400).end();
       }

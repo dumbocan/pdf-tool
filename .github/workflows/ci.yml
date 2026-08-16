@@ -7,15 +7,97 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  root-node:
+    name: Root Node suite
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci
-      - run: node --test test/*.test.js
-      - run: npm audit --omit=dev
-      - run: docker compose config
+          node-version: "22"
+          cache: pnpm
+      - name: Install root dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Randomized pseudonymization gate
+        run: node --test test/*.test.js
+      - name: Root dependency audit (prod only)
+        run: pnpm audit --prod
+      - name: Docker compose config validation
+        run: docker compose config
+
+  frontend-test:
+    name: Frontend vitest (component + a11y)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: apps/nelupdf/pnpm-lock.yaml
+      - name: Install frontend dependencies (frozen lockfile)
+        working-directory: apps/nelupdf
+        run: pnpm install --frozen-lockfile
+      - name: Vitest run (jsdom + axe-core)
+        working-directory: apps/nelupdf
+        run: pnpm test -- --run
+
+  frontend-typecheck:
+    name: Frontend TypeScript check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: apps/nelupdf/pnpm-lock.yaml
+      - name: Install frontend dependencies (frozen lockfile)
+        working-directory: apps/nelupdf
+        run: pnpm install --frozen-lockfile
+      - name: TypeScript noEmit check
+        working-directory: apps/nelupdf
+        run: pnpm exec tsc --noEmit
+
+  rust-boundary:
+    name: Rust unit + check + fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Cargo test
+        working-directory: apps/nelupdf/src-tauri
+        run: "cargo test --manifest-path Cargo.toml"
+      - name: Cargo check
+        working-directory: apps/nelupdf/src-tauri
+        run: "cargo check --manifest-path Cargo.toml"
+      - name: Cargo fmt check
+        working-directory: apps/nelupdf/src-tauri
+        run: "cargo fmt --manifest-path Cargo.toml -- --check"
+
+  boundary-integration:
+    name: "Boundary integration (pending requires WU-1E1)"
+    runs-on: ubuntu-latest
+    if: false
+    steps:
+      - name: Pending gate
+        run: "echo pending requires WU-1E1 private stdio boundary"
+
+  release-package:
+    name: "Linux package smoke (pending requires Slice 5)"
+    runs-on: ubuntu-latest
+    if: false
+    steps:
+      - name: Pending gate
+        run: "echo pending requires Slice 5 Linux qualification"

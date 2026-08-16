@@ -1,0 +1,45 @@
+{
+  "contractVersion": 1,
+  "tools": [
+    {
+      "name": "extract_pdf_from_path",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "maxPages": { "type": "integer", "minimum": 1, "maximum": 200 },
+          "maxChars": { "type": "integer", "minimum": 1, "maximum": 200000 }
+        },
+        "required": ["path"]
+      }
+    },
+    {
+      "name": "extract_pdf_from_base64",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "data": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "maxPages": { "type": "integer", "minimum": 1, "maximum": 200 },
+          "maxChars": { "type": "integer", "minimum": 1, "maximum": 200000 }
+        },
+        "required": ["data"]
+      }
+    },
+    {
+      "name": "extract_pdf_with_llm",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "prompt": { "type": "string", "minLength": 1, "maxLength": 16000 },
+          "maxTokens": { "type": "integer", "minimum": 256, "maximum": 16000 }
+        },
+        "required": ["path"]
+      }
+    }
+  ]
+}

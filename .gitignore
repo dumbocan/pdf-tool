@@ -6,3 +6,4 @@ node_modules/
 # Local index/skill state (never commit)
 .codegraph/
 .atl/
+.serena/
