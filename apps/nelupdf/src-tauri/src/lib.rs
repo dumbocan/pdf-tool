@@ -27,7 +27,7 @@ fn register_document_v1(req: RegisterDocumentV1) -> ApiResult<RegisteredDocument
 #[tauri::command]
 fn extract_local_v1(req: ExtractLocalV1) -> ApiResult<LocalExtractionV1> {
     let data = LocalExtractionV1 {
-        provenance: "local".to_string(),
+        provenance: "local_deterministic".to_string(),
         document_sha256: "a".repeat(SHA256_LEN),
         status: ExtractionStatus::Complete,
         pages_processed: 0,
@@ -45,7 +45,7 @@ fn extract_local_v1(req: ExtractLocalV1) -> ApiResult<LocalExtractionV1> {
             },
             matched: vec![],
         },
-        untrusted: false,
+        untrusted: true,
     };
     validate_and_wrap(&req, data)
 }

@@ -419,17 +419,20 @@ pub struct LocalExtractionV1 {
     pub untrusted: bool,
 }
 
+/// Envelope matching design §5.1: `{ protocolVersion, ok, requestId, data|error }`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "ok", rename_all = "camelCase")]
+#[serde(untagged)]
 pub enum ApiResult<T> {
-    #[serde(rename = "true")]
+    #[serde(rename_all = "camelCase")]
     Ok {
+        ok: bool,
         protocol_version: u8,
         request_id: String,
         data: T,
     },
-    #[serde(rename = "false")]
+    #[serde(rename_all = "camelCase")]
     Error {
+        ok: bool,
         protocol_version: u8,
         request_id: String,
         error: PublicError,
@@ -498,6 +501,7 @@ pub fn validate_request<T: Validate + RequestEnvelope>(req: &T) -> Result<(), Ap
     match req.validate() {
         Ok(()) => Ok(()),
         Err(e) => Err(ApiResult::Error {
+            ok: false,
             protocol_version: req.protocol_version(),
             request_id: req.request_id().to_string(),
             error: PublicError {
@@ -517,11 +521,13 @@ pub fn validate_and_wrap<T: Validate + RequestEnvelope, D>(
 ) -> ApiResult<D> {
     match validate_request(req) {
         Ok(()) => ApiResult::Ok {
+            ok: true,
             protocol_version: req.protocol_version(),
             request_id: req.request_id().to_string(),
             data,
         },
-        Err(ApiResult::Error { protocol_version, request_id, error }) => ApiResult::Error {
+        Err(ApiResult::Error { protocol_version, request_id, error, .. }) => ApiResult::Error {
+            ok: false,
             protocol_version,
             request_id,
             error,
@@ -926,7 +932,7 @@ mod tests {
         };
         let result = validate_and_wrap(&req, data);
         match result {
-            ApiResult::Ok { protocol_version, request_id, data: _ } => {
+            ApiResult::Ok { protocol_version, request_id, .. } => {
                 assert_eq!(protocol_version, 1);
                 assert_eq!(request_id, VALID_UUID);
             }
@@ -949,7 +955,7 @@ mod tests {
         let result = validate_and_wrap(&req, data);
         match result {
             ApiResult::Ok { .. } => panic!("invalid request must produce Error"),
-            ApiResult::Error { protocol_version, request_id, error } => {
+            ApiResult::Error { protocol_version, request_id, error, .. } => {
                 assert_eq!(protocol_version, 1);
                 assert_eq!(request_id, VALID_UUID);
                 assert_eq!(error.code, PublicErrorCode::InputTooLarge);
@@ -1009,5 +1015,139 @@ mod tests {
         assert_eq!(error_code_from_contract("max_pages"), PublicErrorCode::PageLimit);
         assert_eq!(error_code_from_contract("invalid_name"), PublicErrorCode::InvalidRequest);
         assert_eq!(error_code_from_contract("unknown"), PublicErrorCode::InvalidRequest);
+    }
+
+    // === Envelope serialization tests (WU-1D3) ===
+
+    #[test]
+    fn envelope_ok_shape_matches_design() {
+        let json = format!(
+            r#"{{"protocolVersion":1,"requestId":"{}","name":"invoice.pdf","declaredBytes":44,"pdfBase64":"AAAA"}}"#,
+            VALID_UUID
+        );
+        let req: RegisterDocumentV1 = serde_json::from_str(&json).unwrap();
+        let data = RegisteredDocumentV1 {
+            document_id: VALID_DOC_ID.to_string(),
+            display_name: "invoice.pdf".to_string(),
+            byte_length: 44,
+        };
+        let result = validate_and_wrap(&req, data);
+        let serialized = serde_json::to_string(&result).unwrap();
+
+        let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(v["protocolVersion"], 1);
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["requestId"], VALID_UUID);
+        assert_eq!(v["data"]["documentId"], VALID_DOC_ID);
+        assert_eq!(v["data"]["displayName"], "invoice.pdf");
+        assert_eq!(v["data"]["byteLength"], 44);
+        assert!(v.get("error").is_none(), "ok variant must not have error");
+    }
+
+    #[test]
+    fn envelope_error_shape_matches_design() {
+        let json = format!(
+            r#"{{"protocolVersion":1,"requestId":"{}","name":"invoice.pdf","declaredBytes":0,"pdfBase64":"AAAA"}}"#,
+            VALID_UUID
+        );
+        let req: RegisterDocumentV1 = serde_json::from_str(&json).unwrap();
+        let data = RegisteredDocumentV1 {
+            document_id: VALID_DOC_ID.to_string(),
+            display_name: "invoice.pdf".to_string(),
+            byte_length: 0,
+        };
+        let result = validate_and_wrap(&req, data);
+        let serialized = serde_json::to_string(&result).unwrap();
+
+        let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(v["protocolVersion"], 1);
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["requestId"], VALID_UUID);
+        assert_eq!(v["error"]["code"], "input_too_large");
+        assert_eq!(v["error"]["messageKey"], "declared_bytes");
+        assert_eq!(v["error"]["retry"], "never");
+        assert!(v.get("data").is_none(), "error variant must not have data");
+    }
+
+    #[test]
+    fn envelope_error_preserves_protocol_version_on_mismatch() {
+        let json = format!(
+            r#"{{"protocolVersion":3,"requestId":"{}","name":"invoice.pdf","declaredBytes":44,"pdfBase64":"AAAA"}}"#,
+            VALID_UUID
+        );
+        let req: RegisterDocumentV1 = serde_json::from_str(&json).unwrap();
+        let data = RegisteredDocumentV1 {
+            document_id: VALID_DOC_ID.to_string(),
+            display_name: "invoice.pdf".to_string(),
+            byte_length: 44,
+        };
+        let result = validate_and_wrap(&req, data);
+        let serialized = serde_json::to_string(&result).unwrap();
+
+        let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(v["protocolVersion"], 3, "error preserves original protocol version");
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["requestId"], VALID_UUID);
+        assert_eq!(v["error"]["code"], "protocol_mismatch");
+        assert_eq!(v["error"]["messageKey"], "protocol_version");
+    }
+
+    #[test]
+    fn envelope_extract_ok_shape() {
+        let json = format!(
+            r#"{{"protocolVersion":1,"requestId":"{}","documentId":"{}"}}"#,
+            VALID_UUID, VALID_DOC_ID
+        );
+        let req: ExtractLocalV1 = serde_json::from_str(&json).unwrap();
+        let data = LocalExtractionV1 {
+            provenance: "local_deterministic".to_string(),
+            document_sha256: "a".repeat(SHA256_LEN),
+            status: ExtractionStatus::Complete,
+            pages_processed: 5,
+            truncation_reason: None,
+            extraction_mode: ExtractionMode::DigitalText,
+            invoice: InvoiceFieldsV1 {
+                invoice_number: None,
+                invoice_date: None,
+                simplified_invoice_date: None,
+                tax_label: None,
+                totals: InvoiceTotalsV1 { subtotal: None, tax: None, total: None },
+                matched: vec![],
+            },
+            untrusted: true,
+        };
+        let result = validate_and_wrap(&req, data);
+        let serialized = serde_json::to_string(&result).unwrap();
+
+        let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(v["protocolVersion"], 1);
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["requestId"], VALID_UUID);
+        assert_eq!(v["data"]["provenance"], "local_deterministic");
+        assert_eq!(v["data"]["extractionMode"], "digital_text");
+        assert_eq!(v["data"]["pagesProcessed"], 5);
+        assert_eq!(v["data"]["untrusted"], true);
+    }
+
+    #[test]
+    fn envelope_cancel_ok_shape() {
+        let json = format!(
+            r#"{{"protocolVersion":1,"requestId":"{}","operationId":"{}"}}"#,
+            VALID_UUID, VALID_UUID
+        );
+        let req: CancelOperationV1 = serde_json::from_str(&json).unwrap();
+        let data = CancelOperationResultV1 {
+            operation_id: VALID_UUID.to_string(),
+            outcome: CancelOutcome::Accepted,
+        };
+        let result = validate_and_wrap(&req, data);
+        let serialized = serde_json::to_string(&result).unwrap();
+
+        let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(v["protocolVersion"], 1);
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["requestId"], VALID_UUID);
+        assert_eq!(v["data"]["operationId"], VALID_UUID);
+        assert_eq!(v["data"]["outcome"], "accepted");
     }
 }
