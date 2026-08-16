@@ -206,19 +206,21 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 
 **Depends on:** WU-1C1. **Candidates:** `src/engine-stdio.js`, `src/engine-protocol.js`, `src/extract.js` only for exported reuse seams, `src/vendor-parsers.js`, `src/mercadona-parser.js`, `test/engine-stdio.test.js`. **Acceptance:** adapter imports and reuses `validatePdfBuffer`, `extractTextFromPdf`, invoice/vendor parsing, and existing bounds; it does not duplicate or rewrite PDF parsing; stdout is protocol-only; scanned input returns typed `ocr_required_unavailable`; provider/OCR paths are unreachable. **Rollback:** remove adapter and any purely additive export seam; existing engine remains unchanged.
 
-- [ ] `WU-1C2-RED` Add valid, invalid, truncated, partial/scanned, parser-result, no-OCR, and no-provider tests that fail because the executable adapter is absent. <!-- sdd-owner: implementation -->
-- [ ] `WU-1C2-GREEN` Implement the one-request executable as a bounded adapter over existing extraction modules and make `node --test test/engine-stdio.test.js` pass. <!-- sdd-owner: implementation -->
-- [ ] `WU-1C2-TRIANGULATE` Add fixture parity against existing deterministic HTTP/CLI meaning and reject any duplicated parser implementation in the adapter. <!-- sdd-owner: implementation -->
-- [ ] `WU-1C2-REFACTOR` Extract only shared normalization justified by parity, run root/OpenClaw/visual/scope checks, and stay within 390 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1C2-RED` Add valid, invalid, truncated, partial/scanned, parser-result, no-OCR, and no-provider tests that fail because the executable adapter is absent. <!-- sdd-owner: implementation -->
+- [x] `WU-1C2-GREEN` Implement the one-request executable as a bounded adapter over existing extraction modules and make `node --test test/engine-stdio.test.js` pass. <!-- sdd-owner: implementation -->
+- [x] `WU-1C2-TRIANGULATE` Add fixture parity against existing deterministic HTTP/CLI meaning and reject any duplicated parser implementation in the adapter. <!-- sdd-owner: implementation -->
+- [x] `WU-1C2-REFACTOR` Extract only shared normalization justified by parity, run root/OpenClaw/visual/scope checks, and stay within 390 lines. <!-- sdd-owner: implementation -->
+- Evidence: 5/5 engine-stdio tests pass; root suite 158/158 pass; `git diff --check` exit 0; 333 lines within 260-390 budget. Adapter reuses `validatePdfBuffer`, `extractTextFromPdf`, `parseVendorLineItems` from existing modules without duplicating PDF parsing. Scanned input returns `status=partial` + `extractionMode=ocr_required_unavailable`.
 
 ### WU-1C3 — Node process security, response bound, and no-network proof
 
 **Depends on:** WU-1C2. **Candidates:** `src/engine-stdio.js`, `src/engine-protocol.js`, `test/engine-process.test.js`, `test/fixtures/network-deny.mjs`. **Acceptance:** one response capped at 1,048,576 bytes, EOF required, stderr separated, external sockets/provider env/OCR forbidden, deterministic extraction succeeds under network denial. **Rollback:** revert only process-security test/adapter hunks.
 
-- [ ] `WU-1C3-RED` Add outbound-network, extra stdout/frame, response overflow, crash, stderr flood, and provider/OCR sentinel tests; record failures. <!-- sdd-owner: implementation -->
-- [ ] `WU-1C3-GREEN` Apply minimal protocol-only stdout and no-network/provider controls and make `node --test test/engine-process.test.js` pass. <!-- sdd-owner: implementation -->
-- [ ] `WU-1C3-TRIANGULATE` Run a valid PDF under denied network and absent provider configuration; verify local provenance and existing OpenClaw compatibility. <!-- sdd-owner: implementation -->
-- [ ] `WU-1C3-REFACTOR` Bound helpers without broad engine refactoring, then run full Node/visual/scope checks within 300 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1C3-RED` Add outbound-network, extra stdout/frame, response overflow, crash, stderr flood, and provider/OCR sentinel tests; record failures. <!-- sdd-owner: implementation -->
+- [x] `WU-1C3-GREEN` Apply minimal protocol-only stdout and no-network/provider controls and make `node --test test/engine-process.test.js` pass. <!-- sdd-owner: implementation -->
+- [x] `WU-1C3-TRIANGULATE` Run a valid PDF under denied network and absent provider configuration; verify local provenance and existing OpenClaw compatibility. <!-- sdd-owner: implementation -->
+- [x] `WU-1C3-REFACTOR` Bound helpers without broad engine refactoring, then run full Node/visual/scope checks within 300 lines. <!-- sdd-owner: implementation -->
+- Evidence: 17/17 engine-process tests pass; root suite 175/175 pass (`node --test test/*.test.js`); `git diff --check` exit 0; 340 lines within 260-300 budget. `frameResponse()` caps at MAX_RESPONSE_BYTES via text truncation + error fallback; `enforceProcessSecurity()` strips 16 provider/OCR env vars at module load; network-deny.mjs blocks outbound sockets; deterministic extraction succeeds under network denial.
 
 ### WU-1D1 — Rust v1 DTOs, IDs, bounds, and public errors
 

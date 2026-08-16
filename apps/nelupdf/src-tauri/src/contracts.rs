@@ -42,7 +42,7 @@ pub trait Validate {
 // === Validation helpers (design §5.2–§5.4) ===
 
 fn is_lower_hex(c: u8) -> bool {
-    (b'0'..=b'9').contains(&c) || (b'a'..=b'f').contains(&c)
+    c.is_ascii_digit() || (b'a'..=b'f').contains(&c)
 }
 
 pub fn is_valid_uuid_v4(s: &str) -> bool {
@@ -52,10 +52,26 @@ pub fn is_valid_uuid_v4(s: &str) -> bool {
     let b = s.as_bytes();
     for (i, &byte) in b.iter().enumerate() {
         match i {
-            8 | 13 | 18 | 23 => if byte != b'-' { return false; },
-            14 => if byte != b'4' { return false; },        // version nibble must be '4'
-            19 => if !matches!(byte, b'8' | b'9' | b'a' | b'b') { return false; }, // variant
-            _ => if !is_lower_hex(byte) { return false; },
+            8 | 13 | 18 | 23 => {
+                if byte != b'-' {
+                    return false;
+                }
+            }
+            14 => {
+                if byte != b'4' {
+                    return false;
+                }
+            } // version nibble must be '4'
+            19 => {
+                if !matches!(byte, b'8' | b'9' | b'a' | b'b') {
+                    return false;
+                }
+            } // variant
+            _ => {
+                if !is_lower_hex(byte) {
+                    return false;
+                }
+            }
         }
     }
     true
@@ -64,9 +80,9 @@ pub fn is_valid_uuid_v4(s: &str) -> bool {
 pub fn is_valid_base64url_id(s: &str) -> bool {
     s.len() == DOCUMENT_ID_LEN
         && s.bytes().all(|b| {
-            (b'A'..=b'Z').contains(&b)
-                || (b'a'..=b'z').contains(&b)
-                || (b'0'..=b'9').contains(&b)
+            b.is_ascii_uppercase()
+                || b.is_ascii_lowercase()
+                || b.is_ascii_digit()
                 || b == b'-'
                 || b == b'_'
         })
@@ -87,9 +103,9 @@ pub fn is_valid_base64(s: &str) -> bool {
     }
     let b = s.as_bytes();
     if !b.iter().all(|&c| {
-        (b'A'..=b'Z').contains(&c)
-            || (b'a'..=b'z').contains(&c)
-            || (b'0'..=b'9').contains(&c)
+        c.is_ascii_uppercase()
+            || c.is_ascii_lowercase()
+            || c.is_ascii_digit()
             || c == b'+'
             || c == b'/'
             || c == b'='
@@ -515,10 +531,7 @@ pub fn validate_request<T: Validate + RequestEnvelope>(req: &T) -> Result<(), Ap
 }
 
 /// Validate request, then on success wrap data in `ApiResult::Ok`; on failure wrap as `ApiResult::Error`.
-pub fn validate_and_wrap<T: Validate + RequestEnvelope, D>(
-    req: &T,
-    data: D,
-) -> ApiResult<D> {
+pub fn validate_and_wrap<T: Validate + RequestEnvelope, D>(req: &T, data: D) -> ApiResult<D> {
     match validate_request(req) {
         Ok(()) => ApiResult::Ok {
             ok: true,
@@ -526,7 +539,12 @@ pub fn validate_and_wrap<T: Validate + RequestEnvelope, D>(
             request_id: req.request_id().to_string(),
             data,
         },
-        Err(ApiResult::Error { protocol_version, request_id, error, .. }) => ApiResult::Error {
+        Err(ApiResult::Error {
+            protocol_version,
+            request_id,
+            error,
+            ..
+        }) => ApiResult::Error {
             ok: false,
             protocol_version,
             request_id,
@@ -649,7 +667,10 @@ mod tests {
             MAX_PDF_BYTES + 1
         );
         let dto: RegisterDocumentV1 = serde_json::from_str(&json).unwrap();
-        assert!(dto.validate().is_err(), "declaredBytes over max must be rejected");
+        assert!(
+            dto.validate().is_err(),
+            "declaredBytes over max must be rejected"
+        );
     }
 
     #[test]
@@ -669,7 +690,10 @@ mod tests {
             VALID_UUID
         );
         let dto: RegisterDocumentV1 = serde_json::from_str(&json).unwrap();
-        assert!(dto.validate().is_err(), "protocolVersion != 1 must be rejected");
+        assert!(
+            dto.validate().is_err(),
+            "protocolVersion != 1 must be rejected"
+        );
     }
 
     // --- ExtractLocalV1 ---
@@ -691,7 +715,10 @@ mod tests {
             VALID_UUID
         );
         let dto: ExtractLocalV1 = serde_json::from_str(&json).unwrap();
-        assert!(dto.validate().is_err(), "invalid documentId must be rejected");
+        assert!(
+            dto.validate().is_err(),
+            "invalid documentId must be rejected"
+        );
     }
 
     #[test]
@@ -743,7 +770,10 @@ mod tests {
             VALID_UUID
         );
         let dto: CancelOperationV1 = serde_json::from_str(&json).unwrap();
-        assert!(dto.validate().is_err(), "invalid operationId must be rejected");
+        assert!(
+            dto.validate().is_err(),
+            "invalid operationId must be rejected"
+        );
     }
 
     // --- PublicError / SafeContext ---
@@ -767,14 +797,20 @@ mod tests {
             retry: RetryCategory::Never,
             safe_context: None,
         };
-        assert!(error.validate().is_err(), "messageKey > 64 must be rejected");
+        assert!(
+            error.validate().is_err(),
+            "messageKey > 64 must be rejected"
+        );
     }
 
     #[test]
     fn red_public_error_rejects_unknown_safe_context_field() {
         let json = r#"{"code":"invalid_request","messageKey":"test","retry":"never","safeContext":{"limit":1,"unit":"x","capability":"y","extra":"z"}}"#;
         let result: Result<PublicError, _> = serde_json::from_str(json);
-        assert!(result.is_err(), "unknown safeContext field must be rejected");
+        assert!(
+            result.is_err(),
+            "unknown safeContext field must be rejected"
+        );
     }
 
     // === Boundary tests (TRIANGULATE) ===
@@ -786,7 +822,7 @@ mod tests {
 
     #[test]
     fn uuid_v4_rejects_wrong_length() {
-        assert!(!is_valid_uuid_v4("550e8400-e29b-43d4-a716-44665544000"));   // 35 chars
+        assert!(!is_valid_uuid_v4("550e8400-e29b-43d4-a716-44665544000")); // 35 chars
         assert!(!is_valid_uuid_v4("550e8400-e29b-43d4-a716-4466554400000")); // 37 chars
     }
 
@@ -802,7 +838,7 @@ mod tests {
 
     #[test]
     fn base64url_id_rejects_wrong_length() {
-        assert!(!is_valid_base64url_id("AAAAAAAAAAAAAAAAAAAAA"));  // 21 chars
+        assert!(!is_valid_base64url_id("AAAAAAAAAAAAAAAAAAAAA")); // 21 chars
         assert!(!is_valid_base64url_id("AAAAAAAAAAAAAAAAAAAAAAA")); // 23 chars
     }
 
@@ -878,7 +914,10 @@ mod tests {
             declared_bytes: 44,
             pdf_base64: "AAAA".to_string(),
         };
-        assert!(dto.validate().is_err(), "name with control char must be rejected");
+        assert!(
+            dto.validate().is_err(),
+            "name with control char must be rejected"
+        );
     }
 
     #[test]
@@ -913,7 +952,10 @@ mod tests {
                 capability: None,
             }),
         };
-        assert!(error.validate().is_err(), "overflowing safeContext.unit must be rejected");
+        assert!(
+            error.validate().is_err(),
+            "overflowing safeContext.unit must be rejected"
+        );
     }
 
     // === Adapter layer tests (WU-1D2) ===
@@ -932,7 +974,11 @@ mod tests {
         };
         let result = validate_and_wrap(&req, data);
         match result {
-            ApiResult::Ok { protocol_version, request_id, .. } => {
+            ApiResult::Ok {
+                protocol_version,
+                request_id,
+                ..
+            } => {
                 assert_eq!(protocol_version, 1);
                 assert_eq!(request_id, VALID_UUID);
             }
@@ -955,7 +1001,12 @@ mod tests {
         let result = validate_and_wrap(&req, data);
         match result {
             ApiResult::Ok { .. } => panic!("invalid request must produce Error"),
-            ApiResult::Error { protocol_version, request_id, error, .. } => {
+            ApiResult::Error {
+                protocol_version,
+                request_id,
+                error,
+                ..
+            } => {
                 assert_eq!(protocol_version, 1);
                 assert_eq!(request_id, VALID_UUID);
                 assert_eq!(error.code, PublicErrorCode::InputTooLarge);
@@ -983,7 +1034,11 @@ mod tests {
                 invoice_date: None,
                 simplified_invoice_date: None,
                 tax_label: None,
-                totals: InvoiceTotalsV1 { subtotal: None, tax: None, total: None },
+                totals: InvoiceTotalsV1 {
+                    subtotal: None,
+                    tax: None,
+                    total: None,
+                },
                 matched: vec![],
             },
             untrusted: false,
@@ -1010,11 +1065,26 @@ mod tests {
 
     #[test]
     fn adapter_error_code_mapping() {
-        assert_eq!(error_code_from_contract("protocol_version"), PublicErrorCode::ProtocolMismatch);
-        assert_eq!(error_code_from_contract("declared_bytes"), PublicErrorCode::InputTooLarge);
-        assert_eq!(error_code_from_contract("max_pages"), PublicErrorCode::PageLimit);
-        assert_eq!(error_code_from_contract("invalid_name"), PublicErrorCode::InvalidRequest);
-        assert_eq!(error_code_from_contract("unknown"), PublicErrorCode::InvalidRequest);
+        assert_eq!(
+            error_code_from_contract("protocol_version"),
+            PublicErrorCode::ProtocolMismatch
+        );
+        assert_eq!(
+            error_code_from_contract("declared_bytes"),
+            PublicErrorCode::InputTooLarge
+        );
+        assert_eq!(
+            error_code_from_contract("max_pages"),
+            PublicErrorCode::PageLimit
+        );
+        assert_eq!(
+            error_code_from_contract("invalid_name"),
+            PublicErrorCode::InvalidRequest
+        );
+        assert_eq!(
+            error_code_from_contract("unknown"),
+            PublicErrorCode::InvalidRequest
+        );
     }
 
     // === Envelope serialization tests (WU-1D3) ===
@@ -1085,7 +1155,10 @@ mod tests {
         let serialized = serde_json::to_string(&result).unwrap();
 
         let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(v["protocolVersion"], 3, "error preserves original protocol version");
+        assert_eq!(
+            v["protocolVersion"], 3,
+            "error preserves original protocol version"
+        );
         assert_eq!(v["ok"], false);
         assert_eq!(v["requestId"], VALID_UUID);
         assert_eq!(v["error"]["code"], "protocol_mismatch");
@@ -1111,7 +1184,11 @@ mod tests {
                 invoice_date: None,
                 simplified_invoice_date: None,
                 tax_label: None,
-                totals: InvoiceTotalsV1 { subtotal: None, tax: None, total: None },
+                totals: InvoiceTotalsV1 {
+                    subtotal: None,
+                    tax: None,
+                    total: None,
+                },
                 matched: vec![],
             },
             untrusted: true,
