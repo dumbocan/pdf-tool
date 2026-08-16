@@ -1,37 +1,57 @@
 schema: spec-driven
 
+session_preflight:
+  execution_mode: interactive
+  artifact_store: hybrid
+  chained_pr_strategy: auto-forecast
+  review_budget_changed_lines: 400
+
 context: |
-  Project: pdf-tool v0.2 standalone local HTTP service.
-  Stack: Node.js 22, native ESM, pdfjs-dist 4.10.38, Docker Compose.
-  Architecture: HTTP-only boundary; local bounded PDF text extraction, deterministic invoice parsing,
-    Mercadona tabular parsing, and optional MiniMax structured-data fallback.
-  Testing: Node built-in test runner with npm audit in CI; no project linter, type checker, formatter, or coverage gate detected.
-  Planning scope: pdf-tool-v0-2-architecture; implementation is not authorized by initialization.
+  Project: pdf-tool 0.2 Node.js extraction engine plus the in-progress NeluPDF 0.1 desktop client.
+  Core stack: Node.js >=22, native ESM, pdfjs-dist 4.10.38, Zod 4, Docker Compose, HTTP/MCP/CLI entry points.
+  Desktop stack: apps/nelupdf uses React 19, TypeScript 5.8, Vite 7, Tauri 2, and Rust 2021.
+  Architecture: bounded local PDF extraction and deterministic invoice parsing are implemented in the Node engine.
+    NeluPDF is a separate React webview that calls the engine over a configurable loopback HTTP URL; its Rust shell
+    currently provides only the template greet command and opener plugin, with no observed sidecar lifecycle integration.
+  Testing: the Node built-in runner covers unit and HTTP integration behavior. The desktop app has TypeScript checking
+    through its build but no configured frontend, Rust, end-to-end, coverage, lint, or formatter suite. CI currently
+    validates only the Node suite, npm audit, and Docker Compose configuration.
+  Current activity: refresh context before the NeluPDF audit; initialization does not authorize product implementation.
 
 strict_tdd: true
 
 testing:
-  test_runner: "node --test test/*.test.js"
+  test_runner: "npm test"
+  test_command: "node --test test/*.test.js"
   framework: "Node.js built-in test runner"
+  test_locations:
+    - "test/*.test.js"
   unit: true
   integration: true
   e2e: false
   coverage: false
   lint: false
-  typecheck: false
+  typecheck: true
+  typecheck_command: "pnpm --dir apps/nelupdf exec tsc --noEmit"
   formatter: false
-  ci_command: "npm ci && node --test test/*.test.js && npm audit --omit=dev"
+  desktop_tests_configured: false
+  ci_command: "npm ci && node --test test/*.test.js && npm audit --omit=dev && docker compose config"
+  observed_baseline:
+    node_tests: "143 passed, 1 failed, 144 total"
+    failing_test: "test/pseudonymize.test.js - amounts mapped affinely preserving arithmetic (factor entero)"
+    desktop_typecheck: "passed"
+    docker_compose_config: "passed"
 
 rules:
   proposal:
-    - Keep the HTTP-only architecture and explicitly define the v0.2 boundary before considering implementation.
-    - Include unresolved MiniMax response-formatting behavior and a rollback/compatibility plan.
+    - Define the Node engine, NeluPDF desktop client, and process-lifecycle boundary before considering implementation.
+    - Distinguish observed behavior from audit recommendations and include rollback/compatibility implications.
   specs:
     - Use Given/When/Then scenarios and RFC 2119 requirement keywords.
-    - Cover invoices, appliance manuals, generic PDFs, parser fallback, and untrusted document content.
+    - Cover local-only behavior, explicit consent before provider calls, untrusted PDF content, and desktop failure states.
   design:
-    - Preserve bounded resource usage, the trust boundary, and separation between deterministic extraction and LLM fallback.
-    - Document the Python-consumer boundary as an integration concern, not an implicit runtime requirement.
+    - Preserve bounded resource usage, the trust boundary, and separation between deterministic extraction and optional LLM use.
+    - Make loopback authentication, engine startup/shutdown ownership, and desktop-to-engine integration explicit.
   tasks:
     - Group tasks by dependency phase and keep them independently verifiable.
   apply:
@@ -39,7 +59,10 @@ rules:
     test_command: "node --test test/*.test.js"
   verify:
     test_command: "node --test test/*.test.js"
-    build_command: "docker compose config"
+    typecheck_command: "pnpm --dir apps/nelupdf exec tsc --noEmit"
+    build_commands:
+      - "docker compose config"
+      - "cd apps/nelupdf && pnpm build"
     coverage_threshold: 0
   archive:
     - Do not archive until implementation authorization and verification evidence are explicit.
