@@ -366,7 +366,10 @@ function minimizePayload({ documentId, purpose, localExtraction, pseudonymizer }
       if (Object.keys(totals).length > 0) fields.totals = totals;
     }
     if (Array.isArray(invoice.matched)) {
-      fieldsMatched = invoice.matched.slice().sort();
+      fieldsMatched = invoice.matched
+        .map((m) => (typeof m === "string" ? m : m.label))
+        .slice()
+        .sort();
     }
   }
   return {

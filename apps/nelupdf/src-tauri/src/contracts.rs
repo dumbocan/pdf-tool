@@ -366,6 +366,29 @@ impl Validate for CancelOperationV1 {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct GetDocumentPdfBase64V1 {
+    pub protocol_version: u8,
+    pub request_id: String,
+    pub document_id: String,
+}
+
+impl Validate for GetDocumentPdfBase64V1 {
+    fn validate(&self) -> Result<(), ContractError> {
+        if self.protocol_version != PROTOCOL_VERSION {
+            return Err(ContractError::new("protocol_version"));
+        }
+        if !is_valid_uuid_v4(&self.request_id) {
+            return Err(ContractError::new("request_id"));
+        }
+        if !is_valid_base64url_id(&self.document_id) {
+            return Err(ContractError::new("document_id"));
+        }
+        Ok(())
+    }
+}
+
 // === Response DTOs (design §5.2–§5.3) ===
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -380,6 +403,12 @@ pub struct RegisteredDocumentV1 {
 pub struct CancelOperationResultV1 {
     pub operation_id: String,
     pub outcome: CancelOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DocumentPdfBase64V1 {
+    pub pdf_base64: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -413,13 +442,32 @@ pub struct InvoiceTotalsV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct FieldBboxV1 {
+    pub page: u32,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct MatchedFieldV1 {
+    pub label: String,
+    pub value: Option<String>,
+    pub bbox: Option<FieldBboxV1>,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct InvoiceFieldsV1 {
     pub invoice_number: Option<String>,
     pub invoice_date: Option<String>,
     pub simplified_invoice_date: Option<String>,
     pub tax_label: Option<String>,
     pub totals: InvoiceTotalsV1,
-    pub matched: Vec<String>,
+    pub matched: Vec<MatchedFieldV1>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,6 +480,8 @@ pub struct LocalExtractionV1 {
     pub truncation_reason: Option<TruncationReason>,
     pub extraction_mode: ExtractionMode,
     pub invoice: InvoiceFieldsV1,
+    #[serde(default)]
+    pub review_pdf_base64: Option<String>,
     pub untrusted: bool,
 }
 
@@ -484,6 +534,15 @@ impl RequestEnvelope for ExtractLocalV1 {
 }
 
 impl RequestEnvelope for CancelOperationV1 {
+    fn protocol_version(&self) -> u8 {
+        self.protocol_version
+    }
+    fn request_id(&self) -> &str {
+        &self.request_id
+    }
+}
+
+impl RequestEnvelope for GetDocumentPdfBase64V1 {
     fn protocol_version(&self) -> u8 {
         self.protocol_version
     }
@@ -1041,6 +1100,7 @@ mod tests {
                 },
                 matched: vec![],
             },
+            review_pdf_base64: None,
             untrusted: false,
         };
         let result = validate_and_wrap(&req, data);
@@ -1191,6 +1251,7 @@ mod tests {
                 },
                 matched: vec![],
             },
+            review_pdf_base64: None,
             untrusted: true,
         };
         let result = validate_and_wrap(&req, data);

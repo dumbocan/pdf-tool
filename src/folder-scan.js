@@ -88,15 +88,24 @@ export async function scanFolder(folder, { useOcr = false, useLlm = false, onPro
       // parser output (e.g. the ISO date), which would corrupt the filename date.
       if (llmFields?.fields?.invoiceNumber && !fields.invoiceNumber) {
         fields.invoiceNumber = String(llmFields.fields.invoiceNumber);
-        fields.matched = [...(fields.matched ?? []), "invoiceNumber"];
+        fields.matched = [
+          ...(fields.matched ?? []),
+          { label: "invoiceNumber", value: fields.invoiceNumber, bbox: null, editable: true },
+        ];
       }
       if (llmFields?.fields?.invoiceDate && !fields.invoiceDate) {
         fields.invoiceDate = String(llmFields.fields.invoiceDate);
-        fields.matched = [...(fields.matched ?? []), "invoiceDate"];
+        fields.matched = [
+          ...(fields.matched ?? []),
+          { label: "invoiceDate", value: fields.invoiceDate, bbox: null, editable: true },
+        ];
       }
       if (llmFields?.fields?.total != null && !fields.totals?.total) {
         fields.totals = { ...(fields.totals ?? {}), total: String(llmFields.fields.total) };
-        fields.matched = [...(fields.matched ?? []), "total"];
+        fields.matched = [
+          ...(fields.matched ?? []),
+          { label: "total", value: fields.totals.total, bbox: null, editable: true },
+        ];
       }
       if (Array.isArray(llmFields?.lineItems) && llmFields.lineItems.length > lineItems.length) {
         lineItems = llmFields.lineItems;
@@ -112,7 +121,9 @@ export async function scanFolder(folder, { useOcr = false, useLlm = false, onPro
       tax: fields.totals?.tax ?? "",
       total: fields.totals?.total ?? "",
       taxLabel: fields.taxLabel ?? "",
-      matched: (fields.matched ?? []).join("|"),
+      matched: (fields.matched ?? [])
+        .map((m) => (typeof m === "string" ? m : m.label))
+        .join("|"),
       lineItems: lineItems
         .map((li) =>
           [li.description ?? "", li.units ?? li.quantity ?? "", li.unit_price_eur ?? li.unitPrice ?? "", li.amount_eur ?? li.amount ?? ""].join(" :: "),

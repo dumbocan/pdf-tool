@@ -1,3 +1,25 @@
+export type Bbox = {
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type MatchedField = {
+  label: string;
+  value: string | null;
+  bbox: Bbox | null;
+  editable: boolean;
+};
+
+export type Template = {
+  id: string;
+  providerId: string;
+  fields: { label: string; bbox: Bbox }[];
+  createdAt: number;
+};
+
 export type LocalExtractionV1 = {
   provenance: "local_deterministic";
   documentSha256: string;
@@ -19,8 +41,9 @@ export type LocalExtractionV1 = {
       tax: string | null;
       total: string | null;
     };
-    matched: string[];
+    matched: MatchedField[];
   };
+  reviewPdfBase64: string | null;
   untrusted: true;
 };
 

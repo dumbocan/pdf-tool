@@ -320,6 +320,7 @@ mod tests {
                 totals: InvoiceTotalsV1 { subtotal: None, tax: None, total: None },
                 matched: vec![],
             }),
+            review_pdf_base64: None,
             untrusted: true,
         };
         assert_eq!(local.provenance, "local_deterministic");

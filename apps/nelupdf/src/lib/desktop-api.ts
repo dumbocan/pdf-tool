@@ -33,6 +33,7 @@ export interface DesktopApi {
     maxPages?: number;
     maxChars?: number;
   }): Promise<ExtractResult>;
+  getDocumentPdfBase64(documentId: string): Promise<string>;
   requestLlmPreview?(): Promise<never>;
   confirmLlm?(): Promise<never>;
 }
@@ -68,6 +69,27 @@ export function createTauriDesktopApi(): DesktopApi {
         },
       });
       return result as ExtractResult;
+    },
+    async getDocumentPdfBase64(documentId) {
+      const result = await invoke<{
+        ok: boolean;
+        protocolVersion: number;
+        requestId: string;
+        data: { pdfBase64: string } | null;
+        error: PublicError | null;
+      }>("get_document_pdf_base64_v1", {
+        req: {
+          protocolVersion: 1,
+          requestId: crypto.randomUUID(),
+          documentId,
+        },
+      });
+      if (!result.ok || !result.data) {
+        throw new Error(
+          result.error?.messageKey ?? "get_document_pdf_base64_failed",
+        );
+      }
+      return result.data.pdfBase64;
     },
   };
 }

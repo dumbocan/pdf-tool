@@ -8,9 +8,10 @@ mod test_support;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use contracts::{
     validate_and_wrap, ApiResult, CancelOperationResultV1, CancelOperationV1, CancelOutcome,
-    ExtractLocalV1, ExtractionMode, ExtractionStatus, InvoiceFieldsV1, InvoiceTotalsV1,
-    LocalExtractionV1, PublicError, PublicErrorCode, RegisterDocumentV1, RegisteredDocumentV1,
-    RetryCategory, Validate, PROTOCOL_VERSION,
+    DocumentPdfBase64V1, ExtractLocalV1, ExtractionMode, ExtractionStatus, GetDocumentPdfBase64V1,
+    InvoiceFieldsV1, InvoiceTotalsV1, LocalExtractionV1, PublicError, PublicErrorCode,
+    RegisterDocumentV1, RegisteredDocumentV1, RequestEnvelope, RetryCategory, Validate,
+    PROTOCOL_VERSION,
 };
 use doc_store::DocStore;
 use engine::{run_extraction, SidecarDocument, SidecarLimits, SidecarRequest, SidecarResponse};
@@ -22,15 +23,15 @@ fn documents() -> &'static DocStore {
     DOCUMENTS.get_or_init(DocStore::default)
 }
 
-fn operational_error<T>(
-    req: &ExtractLocalV1,
+fn operational_error<T, R: RequestEnvelope>(
+    req: &R,
     code: PublicErrorCode,
     message_key: &'static str,
 ) -> ApiResult<T> {
     ApiResult::Error {
         ok: false,
-        protocol_version: req.protocol_version,
-        request_id: req.request_id.clone(),
+        protocol_version: req.protocol_version(),
+        request_id: req.request_id().to_string(),
         error: PublicError {
             code,
             message_key: message_key.to_string(),
@@ -86,6 +87,7 @@ fn extract_local_v1(req: ExtractLocalV1) -> ApiResult<LocalExtractionV1> {
                 truncation_reason: None,
                 extraction_mode: ExtractionMode::OcrRequiredUnavailable,
                 invoice: empty_invoice(),
+                review_pdf_base64: None,
                 untrusted: true,
             },
         );
@@ -181,6 +183,7 @@ fn map_response(response: SidecarResponse) -> LocalExtractionV1 {
             ExtractionMode::DigitalText
         },
         invoice: response.invoice_fields.unwrap_or_else(empty_invoice),
+        review_pdf_base64: None,
         untrusted: true,
     }
 }
@@ -194,6 +197,26 @@ fn cancel_operation_v1(req: CancelOperationV1) -> ApiResult<CancelOperationResul
     validate_and_wrap(&req, data)
 }
 
+#[tauri::command]
+fn get_document_pdf_base64_v1(
+    req: GetDocumentPdfBase64V1,
+) -> ApiResult<DocumentPdfBase64V1> {
+    let stored = match documents().get(&req.document_id) {
+        Some(doc) => doc,
+        None => {
+            return operational_error(
+                &req,
+                PublicErrorCode::UnauthorizedDocument,
+                "document_not_found",
+            )
+        }
+    };
+    let data = DocumentPdfBase64V1 {
+        pdf_base64: STANDARD.encode(&stored.bytes),
+    };
+    validate_and_wrap(&req, data)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -202,7 +225,8 @@ pub fn run() {
             greet,
             register_document_v1,
             extract_local_v1,
-            cancel_operation_v1
+            cancel_operation_v1,
+            get_document_pdf_base64_v1
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -236,6 +260,48 @@ mod integration_tests {
         match extract_local_v1(extract) {
             ApiResult::Ok { data, .. } => assert!(data.pages_processed > 0),
             other => panic!("unexpected extract result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_document_pdf_base64_returns_registered_bytes() {
+        let bytes: &[u8] = b"%PDF-1.4\n%minimal pdf bytes for unit test\n%%EOF\n";
+        let register = RegisterDocumentV1 {
+            protocol_version: 1,
+            request_id: "123e4567-e89b-42d3-a456-426614174000".to_string(),
+            name: "invoice.pdf".to_string(),
+            declared_bytes: bytes.len() as u64,
+            pdf_base64: STANDARD.encode(bytes),
+        };
+        let registered = match register_document_v1(register) {
+            ApiResult::Ok { data, .. } => data,
+            other => panic!("unexpected register result: {other:?}"),
+        };
+        let get_req = GetDocumentPdfBase64V1 {
+            protocol_version: 1,
+            request_id: "123e4567-e89b-42d3-a456-426614174002".to_string(),
+            document_id: registered.document_id.clone(),
+        };
+        match get_document_pdf_base64_v1(get_req) {
+            ApiResult::Ok { data, .. } => {
+                assert_eq!(data.pdf_base64, STANDARD.encode(bytes));
+            }
+            other => panic!("unexpected get result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_document_pdf_base64_rejects_unknown_document() {
+        let get_req = GetDocumentPdfBase64V1 {
+            protocol_version: 1,
+            request_id: "123e4567-e89b-42d3-a456-426614174003".to_string(),
+            document_id: "aaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        };
+        match get_document_pdf_base64_v1(get_req) {
+            ApiResult::Error { error, .. } => {
+                assert_eq!(error.code, PublicErrorCode::UnauthorizedDocument);
+            }
+            other => panic!("expected error for unknown document, got: {other:?}"),
         }
     }
 }

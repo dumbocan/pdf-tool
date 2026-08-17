@@ -25,11 +25,17 @@ test("extractInvoiceFields returns structured fields for a typical Mercadona sim
   assert.equal(fields.totals.subtotal, null);
   assert.equal(fields.totals.tax, null);
   assert.equal(fields.taxLabel, null);
-  assert.ok(fields.matched.includes("simplifiedInvoiceDate"));
-  assert.ok(fields.matched.includes("invoiceNumber"));
-  assert.ok(fields.matched.includes("total"));
+  assert.ok(matchedLabels(fields).includes("simplifiedInvoiceDate"));
+  assert.ok(matchedLabels(fields).includes("invoiceNumber"));
+  assert.ok(matchedLabels(fields).includes("total"));
   assert.equal(fields.untrusted, true);
 });
+
+function matchedLabels(fields) {
+  return (fields.matched ?? []).map((m) =>
+    typeof m === "string" ? m : m.label,
+  );
+}
 
 test("extractInvoiceFields picks up both Fecha Factura and Fecha factura simplificada when both appear", () => {
   const text = [
@@ -64,9 +70,9 @@ test("extractInvoiceFields parses IGIC (Canary tax) totals and tax label where p
   assert.equal(fields.totals.subtotal, "100.00");
   assert.equal(fields.totals.tax, "7.00");
   assert.equal(fields.totals.total, "107.00");
-  assert.ok(fields.matched.includes("subtotal"));
-  assert.ok(fields.matched.includes("tax"));
-  assert.ok(fields.matched.includes("taxLabel"));
+  assert.ok(matchedLabels(fields).includes("subtotal"));
+  assert.ok(matchedLabels(fields).includes("tax"));
+  assert.ok(matchedLabels(fields).includes("taxLabel"));
 });
 
 test("extractInvoiceFields normalizes Spanish decimal commas to ISO dots and enforces two decimal places", () => {
@@ -177,8 +183,8 @@ test("sliceDateValue extracts date even when trailing text exists on the same li
   assert.equal(fields.simplifiedInvoiceDate, "2026-07-27");
   assert.equal(fields.invoiceNumber, "A-G2026-385710");
   assert.equal(fields.totals.total, "133.36");
-  assert.ok(fields.matched.includes("invoiceDate"));
-  assert.ok(fields.matched.includes("simplifiedInvoiceDate"));
+  assert.ok(matchedLabels(fields).includes("invoiceDate"));
+  assert.ok(matchedLabels(fields).includes("simplifiedInvoiceDate"));
 });
 
 test("sliceDateValue finds date on the line after the label when PDF splits them", () => {
@@ -191,7 +197,7 @@ test("sliceDateValue finds date on the line after the label when PDF splits them
   const fields = extractInvoiceFields(text);
   assert.equal(fields.invoiceDate, "2026-07-27");
   // Date is on next line — new sliceDateValue spots it across lines
-  assert.ok(fields.matched.includes("invoiceDate"));
+  assert.ok(matchedLabels(fields).includes("invoiceDate"));
 });
 
 test("INVOICE_LABEL_HINT surfaces the labels it scans so the agent prompt can quote them", () => {

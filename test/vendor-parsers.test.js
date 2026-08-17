@@ -83,7 +83,10 @@ test("enrichInvoiceFields fills the generic gaps with vendor-specific fields", (
   assert.equal(fields.totals.total, "140.80");
   assert.equal(fields.vendor, "miller");
   for (const key of ["invoiceNumber", "invoiceDate", "subtotal", "tax", "total", "taxLabel"]) {
-    assert.ok(fields.matched.includes(key), `matched should include ${key}`);
+    const labels = (fields.matched ?? []).map((m) =>
+      typeof m === "string" ? m : m.label,
+    );
+    assert.ok(labels.includes(key), `matched should include ${key}`);
   }
 });
 

@@ -205,6 +205,14 @@ function sliceTaxLabel(text) {
   return null;
 }
 
+function makeMatchedField(label, value) {
+  return { label, value: value ?? null, bbox: null, editable: true };
+}
+
+function hasLabel(matched, label) {
+  return matched.some((m) => m.label === label);
+}
+
 // Deterministic invoice-field extractor. Runs over already-extracted text,
 // before any PII redaction pass on the free text. Every value is a plain
 // string, every parse path is regex-only, every result is labeled untrusted.
@@ -213,25 +221,26 @@ export function extractInvoiceFields(text) {
   const matched = [];
 
   const invoiceDate = sliceDateValue(input, LABEL_INVOICE_DATE_RE);
-  if (invoiceDate) matched.push("invoiceDate");
+  if (invoiceDate) matched.push(makeMatchedField("invoiceDate", invoiceDate));
 
   const simplifiedInvoiceDate = sliceDateValue(input, LABEL_SIMPLIFIED_DATE_RE);
-  if (simplifiedInvoiceDate) matched.push("simplifiedInvoiceDate");
+  if (simplifiedInvoiceDate)
+    matched.push(makeMatchedField("simplifiedInvoiceDate", simplifiedInvoiceDate));
 
   const invoiceNumber = sliceInvoiceNumber(input);
-  if (invoiceNumber) matched.push("invoiceNumber");
+  if (invoiceNumber) matched.push(makeMatchedField("invoiceNumber", invoiceNumber));
 
   const subtotal = sliceAmount(input, LABEL_SUBTOTAL_RE);
-  if (subtotal) matched.push("subtotal");
+  if (subtotal) matched.push(makeMatchedField("subtotal", subtotal));
 
   const taxLabel = sliceTaxLabel(input);
-  if (taxLabel) matched.push("taxLabel");
+  if (taxLabel) matched.push(makeMatchedField("taxLabel", taxLabel));
 
   const tax = sliceAmount(input, LABEL_TAX_RE);
-  if (tax) matched.push("tax");
+  if (tax) matched.push(makeMatchedField("tax", tax));
 
   const total = sliceAmount(input, LABEL_TOTAL_RE);
-  if (total) matched.push("total");
+  if (total) matched.push(makeMatchedField("total", total));
 
   return {
     invoiceDate,
@@ -260,20 +269,20 @@ export function enrichInvoiceFields(text) {
   const merged = { ...base, vendor: vendorResult.vendor, totals };
   if (vendorFields.invoiceNumber != null) {
     merged.invoiceNumber = vendorFields.invoiceNumber;
-    if (!matched.includes("invoiceNumber")) matched.push("invoiceNumber");
+    if (!hasLabel(matched, "invoiceNumber")) matched.push(makeMatchedField("invoiceNumber", vendorFields.invoiceNumber));
   }
   if (vendorFields.invoiceDate != null) {
     merged.invoiceDate = vendorFields.invoiceDate;
-    if (!matched.includes("invoiceDate")) matched.push("invoiceDate");
+    if (!hasLabel(matched, "invoiceDate")) matched.push(makeMatchedField("invoiceDate", vendorFields.invoiceDate));
   }
   if (vendorFields.taxLabel != null) {
     merged.taxLabel = vendorFields.taxLabel;
-    if (!matched.includes("taxLabel")) matched.push("taxLabel");
+    if (!hasLabel(matched, "taxLabel")) matched.push(makeMatchedField("taxLabel", vendorFields.taxLabel));
   }
   for (const key of ["subtotal", "tax", "total"]) {
     if (vendorFields.totals?.[key] != null) {
       totals[key] = vendorFields.totals[key];
-      if (!matched.includes(key)) matched.push(key);
+      if (!hasLabel(matched, key)) matched.push(makeMatchedField(key, totals[key]));
     }
   }
   merged.matched = matched;
