@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import appSource from "./App.tsx?raw";
 import type { DesktopApi } from "./lib/desktop-api";
-import type { LocalExtractionV1 } from "./lib/types";
+import type { LocalExtractionV1, MatchedField } from "./lib/types";
 
 afterEach(clearMocks);
 
@@ -21,6 +21,20 @@ async function assertNoA11yViolations(container: HTMLElement) {
 function extraction(
   overrides: Partial<LocalExtractionV1> = {},
 ): LocalExtractionV1 {
+  const matched: MatchedField[] = [
+    {
+      label: "invoiceNumber",
+      value: "A-1",
+      bbox: null,
+      editable: true,
+    },
+    {
+      label: "total",
+      value: "12.1",
+      bbox: null,
+      editable: true,
+    },
+  ];
   return {
     provenance: "local_deterministic",
     documentSha256: "sha256",
@@ -34,8 +48,9 @@ function extraction(
       simplifiedInvoiceDate: "2026-08-17",
       taxLabel: "IVA",
       totals: { subtotal: "10", tax: "2.1", total: "12.1" },
-      matched: ["invoiceNumber", "total"],
+      matched,
     },
+    reviewPdfBase64: null,
     untrusted: true,
     ...overrides,
   };
@@ -49,6 +64,7 @@ function fakeApi(result: Awaited<ReturnType<DesktopApi["extractLocal"]>>): Deskt
       byteLength: 4,
     }),
     extractLocal: async () => result,
+    getDocumentPdfBase64: async () => "JVBERi0=",
   };
 }
 
@@ -112,6 +128,7 @@ describe("NeluPDF selection screen", () => {
               totals: { subtotal: "10", tax: "2.1", total: "12.1" },
               matched: [],
             },
+            reviewPdfBase64: null,
             untrusted: true,
           },
         };

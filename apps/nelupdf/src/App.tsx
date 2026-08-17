@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
+import { VisualReview } from "./components/VisualReview";
 import {
   createTauriDesktopApi,
   type DesktopApi,
 } from "./lib/desktop-api";
+import { LocalTemplateStore, type TemplateStore } from "./lib/template-store";
+import type {
+  Bbox,
+  LocalExtractionV1,
+  MatchedField,
+  PublicError,
+  Template,
+} from "./lib/types";
 import { uuidv4 } from "./lib/uuid";
-import type { LocalExtractionV1, PublicError } from "./lib/types";
 
 type ExtractionState =
   | "idle"
@@ -34,18 +42,34 @@ type Row = {
   subtotal: string;
   tax: string;
   taxLabel: string;
-  matched: string[];
+  matched: MatchedField[];
   state: ExtractionState;
   error?: PublicError;
 };
 
 type Progress = { file: string; index: number; total: number };
 
+type ReviewState = {
+  file: string;
+  documentId: string;
+  pdfBase64: string;
+  extraction: LocalExtractionV1;
+  fields: MatchedField[];
+  templates: Template[];
+};
+
 const desktopApi = createTauriDesktopApi();
+const templateStore: TemplateStore = new LocalTemplateStore();
 
-type AppProps = { api?: DesktopApi };
+type AppProps = {
+  api?: DesktopApi;
+  store?: TemplateStore;
+};
 
-function App({ api = desktopApi }: AppProps) {
+function App({
+  api = desktopApi,
+  store = templateStore,
+}: AppProps) {
   const [rows, setRows] = useState<Row[]>([]);
   const [processing, setProcessing] = useState(false);
   const [extractionState, setExtractionState] =
@@ -60,47 +84,97 @@ function App({ api = desktopApi }: AppProps) {
     provider: string;
   } | null>(null);
   const [llmBusy, setLlmBusy] = useState(false);
+  const [review, setReview] = useState<ReviewState | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const extractFile = useCallback(async (file: File): Promise<Row> => {
-    const buf = new Uint8Array(await file.arrayBuffer());
-    let binary = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < buf.length; i += chunk) {
-      binary += String.fromCharCode(...buf.subarray(i, i + chunk));
-    }
-    let base64 = btoa(binary);
-    try {
-      const requestId = uuidv4();
-      setExtractionState("registering");
-      const registered = await api.registerDocument({
-        requestId,
-        name: file.name,
-        declaredBytes: buf.byteLength,
-        pdfBase64: base64,
-      });
-      setExtractionState("ready");
-      setExtractionState("extracting");
-      const result = await api.extractLocal({
-        requestId: uuidv4(),
-        documentId: registered.documentId,
-      });
-      if (!result.ok) {
-        const state = stateForError(result.error);
-        setExtractionState(state);
-        return emptyRow(file.name, state, result.error);
+  const extractFile = useCallback(
+    async (file: File): Promise<Row> => {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < buf.length; i += chunk) {
+        binary += String.fromCharCode(...buf.subarray(i, i + chunk));
       }
-      const state = stateForExtraction(result.data);
-      setExtractionState(state);
-      return rowFromExtraction(file.name, result.data, state);
-    } catch {
-      const error = internalError();
-      setExtractionState("engine_error");
-      return emptyRow(file.name, "engine_error", error);
-    } finally {
-      base64 = "";
-    }
-  }, [api]);
+      let base64 = btoa(binary);
+      try {
+        const requestId = uuidv4();
+        setExtractionState("registering");
+        const registered = await api.registerDocument({
+          requestId,
+          name: file.name,
+          declaredBytes: buf.byteLength,
+          pdfBase64: base64,
+        });
+        setExtractionState("ready");
+        setExtractionState("extracting");
+        const result = await api.extractLocal({
+          requestId: uuidv4(),
+          documentId: registered.documentId,
+        });
+        if (!result.ok) {
+          const state = stateForError(result.error);
+          setExtractionState(state);
+          return emptyRow(file.name, state, result.error);
+        }
+        const state = stateForExtraction(result.data);
+        setExtractionState(state);
+
+        const fields = result.data.invoice.matched;
+        const templates = await store.getByProvider("default");
+        const matchedTemplate = await store.findMatch(fields, "default");
+        const resolvedFields: MatchedField[] = matchedTemplate
+          ? fields.map((f) => {
+              const tpl = matchedTemplate.fields.find(
+                (m) => m.label === f.label,
+              );
+              return tpl ? { ...f, bbox: tpl.bbox } : f;
+            })
+          : fields;
+
+        if (matchedTemplate) {
+          return rowFromExtraction(
+            file.name,
+            {
+              ...result.data,
+              invoice: { ...result.data.invoice, matched: resolvedFields },
+            },
+            state,
+          );
+        }
+
+        if (resolvedFields.length === 0) {
+          return rowFromExtraction(
+            file.name,
+            {
+              ...result.data,
+              invoice: { ...result.data.invoice, matched: resolvedFields },
+            },
+            state,
+          );
+        }
+
+        const pdfBase64 =
+          result.data.reviewPdfBase64 ??
+          (await api.getDocumentPdfBase64(registered.documentId));
+        setReview({
+          file: file.name,
+          documentId: registered.documentId,
+          pdfBase64,
+          extraction: result.data,
+          fields: resolvedFields,
+          templates,
+        });
+        return emptyRow(file.name, state);
+      } catch {
+        const error = internalError();
+        setExtractionState("engine_error");
+        return emptyRow(file.name, "engine_error", error);
+      } finally {
+        base64 = "";
+      }
+    },
+    [api, store],
+  );
 
   const processFiles = useCallback(
     async (files: File[]) => {
@@ -183,6 +257,56 @@ function App({ api = desktopApi }: AppProps) {
     }
   }, [preview]);
 
+  const handleReviewEdit = useCallback(
+    (field: MatchedField, newValue: string) => {
+      setReview((prev) => {
+        if (!prev) return prev;
+        const updated = prev.fields.map((f) =>
+          f.label === field.label ? { ...f, value: newValue } : f,
+        );
+        return { ...prev, fields: updated };
+      });
+    },
+    [],
+  );
+
+  const handleReviewRectChange = useCallback(
+    (field: MatchedField, newBbox: Bbox) => {
+      setReview((prev) => {
+        if (!prev) return prev;
+        const updated = prev.fields.map((f) =>
+          f.label === field.label ? { ...f, bbox: newBbox } : f,
+        );
+        return { ...prev, fields: updated };
+      });
+    },
+    [],
+  );
+
+  const handleReviewConfirm = useCallback(
+    (template: Template | null) => {
+      setReview((r) => {
+        if (!r) return r;
+        if (template) {
+          void store.save(template);
+        }
+        const updated: LocalExtractionV1 = {
+          ...r.extraction,
+          invoice: { ...r.extraction.invoice, matched: r.fields },
+        };
+        const state = stateForExtraction(updated);
+        const row = rowFromExtraction(r.file, updated, state);
+        setRows((prev) => [...prev, row]);
+        return null;
+      });
+    },
+    [store],
+  );
+
+  const handleReviewCancel = useCallback(() => {
+    setReview(null);
+  }, []);
+
   return (
     <div className="app">
       <header className="app-header">
@@ -238,6 +362,27 @@ function App({ api = desktopApi }: AppProps) {
       {extractionState !== "idle" && !progress && !notice && (
         <div className="progress" role="status">
           {stateLabel(extractionState)}
+        </div>
+      )}
+
+      {review && (
+        <div className="review-overlay-host">
+          <VisualReview
+            pdfBase64={review.pdfBase64}
+            fields={review.fields}
+            templates={review.templates}
+            onConfirm={() => handleReviewConfirm(null)}
+            onEdit={handleReviewEdit}
+            onRectChange={handleReviewRectChange}
+            onSaveTemplate={(tpl) => handleReviewConfirm(tpl)}
+          />
+          <button
+            type="button"
+            onClick={handleReviewCancel}
+            className="review-overlay-close"
+          >
+            Cerrar revisión
+          </button>
         </div>
       )}
 
@@ -384,17 +529,48 @@ function rowFromExtraction(
   state: ExtractionState,
 ): Row {
   const { invoice } = result;
+  const merged = mergeFieldsIntoInvoice(invoice.invoiceNumber, invoice.invoiceDate, invoice.totals.subtotal, invoice.totals.tax, invoice.totals.total, invoice.taxLabel, result.invoice.matched);
   return {
     file,
-    invoiceNumber: invoice.invoiceNumber ?? "",
-    invoiceDate: invoice.invoiceDate ?? "",
+    invoiceNumber: merged.invoiceNumber,
+    invoiceDate: merged.invoiceDate,
     simplifiedInvoiceDate: invoice.simplifiedInvoiceDate ?? "",
-    subtotal: invoice.totals.subtotal ?? "",
-    tax: invoice.totals.tax ?? "",
-    total: invoice.totals.total ?? "",
-    taxLabel: invoice.taxLabel ?? "",
-    matched: invoice.matched,
+    subtotal: merged.subtotal,
+    tax: merged.tax,
+    total: merged.total,
+    taxLabel: merged.taxLabel,
+    matched: merged.matched,
     state,
+  };
+}
+
+function mergeFieldsIntoInvoice(
+  invoiceNumber: string | null,
+  invoiceDate: string | null,
+  subtotal: string | null,
+  tax: string | null,
+  total: string | null,
+  taxLabel: string | null,
+  fields: MatchedField[],
+): {
+  invoiceNumber: string;
+  invoiceDate: string;
+  subtotal: string;
+  tax: string;
+  total: string;
+  taxLabel: string;
+  matched: MatchedField[];
+} {
+  const find = (label: string): string | null =>
+    fields.find((f) => f.label === label)?.value ?? null;
+  return {
+    invoiceNumber: find("invoiceNumber") ?? invoiceNumber ?? "",
+    invoiceDate: find("invoiceDate") ?? invoiceDate ?? "",
+    subtotal: find("subtotal") ?? subtotal ?? "",
+    tax: find("tax") ?? tax ?? "",
+    total: find("total") ?? total ?? "",
+    taxLabel: find("taxLabel") ?? taxLabel ?? "",
+    matched: fields,
   };
 }
 
