@@ -1,33 +1,39 @@
 # Next Session
 
-Slice 3 (privacy-transaction) core landed. Follow-up work units and open questions:
+WU-2B (Visual Review UI + template store) is on `wu-2b`. The UI takes
+`MatchedField[]` from `LocalExtractionV1.invoice.matched`, but every field
+currently has `bbox: null` because the Node sidecar still extracts via plain
+text — coordinates are not produced yet. Follow-ups:
 
-- **WU-3A1** — fail-closed legacy raw-LLM route migration. `server.js`, `mcp-facade.js`,
-  `bin/pdf-tool.mjs` must reject raw `/extract-with-llm` and `extract_pdf_with_llm`
-  callers with the versioned migration envelope, while deterministic `/extract`,
-  `extract_pdf_from_base64`, and OpenClaw list/schema remain operational. The new
-  `PrivacyTransactionService.prepare` is the only sanctioned outbound path.
-- **WU-3A2** — formalize the data-class taxonomy and per-purpose minimization matrix
-  beyond the current "use `localExtraction.invoice` fields". The current payload shape
-  is correct for invoice extraction; other declared purposes will need their own
-  minimizers.
-- **WU-3C2** — provider response validation and exact reverse mapping. Use the
-  per-transaction `pseudonymizer` already stored in the transaction record. Numbers
-  and identifiers absent from the map must remain unchanged (no heuristic reversal).
-- **WU-3D1** — wire CLI/HTTP/MCP adapters to call `PrivacyTransactionService.prepare`
-  and `.confirm`. Verify no legacy raw path can construct a payload directly.
-- **WU-3D2** — desktop disclosure/confirm modal in Rust/React. The current
-  `DesktopApi.requestLlmPreview` and `confirmLlm` stubs in
-  `apps/nelupdf/src/lib/desktop-api.ts` need Tauri commands that invoke this service.
-- **Slice 6** — provider enablement gated by qualified review (not just the
-  `provider_disabled` registry).
+- **WU-2C** — populate real `bbox` values in `src/extract.js`. The
+  `pdf-parse` / `pdfjs-dist` text extractor used in the sidecar already
+  returns positional info for each text item; the work is to surface those
+  positions in `MatchedField.bbox` (page-relative percentages) when the
+  extractor actually locates the value. Until then the Visual Review's SVG
+  overlay has nothing to draw and the App.tsx integration falls straight
+  through to row creation when `matched` is empty (no template → no review).
+- **WU-2D** — multi-file review UX. Currently `processFiles` runs each
+  file's extraction sequentially and `setReview` overwrites state, so a
+  multi-file upload that triggers review on more than one doc shows only
+  the last pending review. Either queue the reviews or promote the screen
+  to a wizard.
+- **WU-2E** — visual-review a11y hardening. The inline editor currently
+  positions absolutely off the canvas; arrow-key navigation between
+  fields, focus trapping, and a screen-reader-friendly alternative are
+  not yet wired. Keyboard users can tab through the legend and buttons
+  but not the rects themselves.
+- **WU-3A1** — fail-closed legacy raw-LLM route migration (already noted
+  in pre-WU-2B doc).
 - Open questions:
-  - `src/privacy-service.js` is 809 lines — under the SDD "forecasted 400 lines"
-    rule. Confirm with reviewers whether to split into `privacy-service.js`,
-    `transaction-store.js`, `audit-sink.js` in a follow-up, or keep the consolidated
-    shape that mirrors the WU-3B1 / WU-3B2 / WU-3C1 grouping.
-  - The shutdown hooks are opt-in (`enableShutdownHooks: true`). Production callers
-    (`server.js`, MCP facade) should opt in explicitly during Slice 5 start-up wiring.
-  - The defensive PDF-artifact scrub uses regex against `%PDF-…`, `%%EOF`, and XMP
-    markers. If a future document class produces novel raw-PDF artifacts in invoice
-    fields, broaden `PDF_MARKER_PATTERNS` in `privacy-service.js`.
+  - The pre-existing `cargo clippy --all-targets -- -D warnings` error in
+  `engine.rs:326` (`assert_eq!(local.untrusted, true)`) is unrelated to
+  WU-2B — it predates the work and the test still passes. Fixing the
+  test assertion to `assert!(local.untrusted)` is a one-liner; defer it
+  to a follow-up or fold into WU-2C.
+  - `pdfjs-dist@4` adds ~2.2 MB to the build (`dist/assets/pdf.worker-*.mjs`).
+  Acceptable for desktop; not relevant if a web-only fallback is ever
+  requested.
+  - The visual-review pdfjs `Worker` is loaded via Vite's
+  `new URL("pdfjs-dist/build/pdf.worker.mjs", import.meta.url)` pattern;
+  no extra `vite.config.ts` change was needed beyond installing the
+  package. Confirm in CI that the worker asset ships in `dist/`.

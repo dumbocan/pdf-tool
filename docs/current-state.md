@@ -1,6 +1,10 @@
 # Current State
 
-WU-1 complete: all work units (D1–D6) and the C4 round-trip integration test are implemented, committed, and green.
+WU-2B (Visual Review UI + template store) landed on `wu-2b`. The new
+`LocalExtractionV1.invoice.matched: MatchedField[]` carries `bbox: Bbox | null`
+plus editable flag, the Rust sidecar grew a `get_document_pdf_base64_v1`
+command, and the App routes extraction through a color-coded overlay where
+templates exist or prompts the user to confirm/edit/drag otherwise.
 
 Slice 3 privacy-transaction core landed: `src/privacy-service.js` ships `PrivacyTransactionService`,
 `AuditSink`, `ProviderDisabledError`, the `AuditEvent` closed enum, and the default fail-closed
@@ -25,8 +29,11 @@ content-free audit evidence.
   - Engine returns `status: "ok"` with `pages > 0` and `invoice_fields` present.
   - Tauri commands: `greet`, `register_document_v1`, `extract_local_v1`, `cancel_operation_v1`.
 
-Verification: `cargo test --manifest-path apps/nelupdf/src-tauri/Cargo.toml` passes **68 tests**;
-`cargo clippy --manifest-path apps/nelupdf/src-tauri/Cargo.toml --all-targets -- -D warnings` is clean.
+Verification: `cargo test --manifest-path apps/nelupdf/src-tauri/Cargo.toml` passes **70 tests**;
+`cargo clippy --manifest-path apps/nelupdf/src-tauri/Cargo.toml --all-targets -- -D warnings` is **NOT
+clean** — one pre-existing `assert_eq!(local.untrusted, true)` in `engine.rs:326` triggers
+`clippy::bool-assert-comparison` (the clippy rule was tightened after that test was written; the
+test still passes). Out of scope for WU-2B.
 
 ## Frontend (`apps/nelupdf/src`)
 
@@ -38,8 +45,26 @@ Verification: `cargo test --manifest-path apps/nelupdf/src-tauri/Cargo.toml` pas
   (registering, ready, extracting, complete, partial/OCR, cancelled, engine_error),
   `PublicError` → Spanish user messages. Removed base64 retention from `Row`.
   Native path extraction disabled. LLM handlers stubbed (Slice 3).
+- **WU-2B**: Visual Review UI + template store.
+  - `lib/types.ts` gained `Bbox`, `MatchedField`, `Template`; `LocalExtractionV1.invoice.matched`
+    is now `MatchedField[]` and a new `reviewPdfBase64: string | null` rides in the desktop
+    process only (never serialized to the LLM facade).
+  - `lib/template-store.ts` ships `LocalTemplateStore` (localStorage `nelupdf:templates:v1`,
+    layout fingerprint quantized to 0.1% bins, similarity = fraction of fields within one bin
+    on every axis; same label set required).
+  - `lib/desktop-api.ts` adds `getDocumentPdfBase64(documentId)`, backed by the new Rust
+    command `get_document_pdf_base64_v1` (reuses `DocStore`, scoped, no path forwarding).
+  - `components/VisualReview.tsx` renders the PDF via pdfjs-dist 4 to a `<canvas>`, overlays
+    an SVG with one `<rect>` per matched field color-coded by `FIELD_COLORS`. Click a rect to
+    open the inline editor (label + value + "Correcto"); drag to move, SE corner to resize.
+    Confirm button stays disabled until at least one field is reviewed; "Guardar template"
+    passes through `onSaveTemplate` so the caller decides whether to persist.
+  - `App.tsx` wires it: after extract, query `findMatch`; if a template matches, apply its
+    bboxes and skip review; otherwise render the overlay and commit on confirm. Empty
+    `matched` short-circuits to row creation (nothing to review).
 
-Frontend verification: `npm run test -- --run` passes **8 tests**; `npm run build` succeeds from `apps/nelupdf`.
+Frontend verification: `pnpm test -- --run` passes **22 tests**; `pnpm build` succeeds from
+`apps/nelupdf` (the `pdfjs-dist` worker is emitted as `dist/assets/pdf.worker-*.mjs`).
 
 ## Slice 3 — privacy service (`src/privacy-service.js`)
 
@@ -83,12 +108,15 @@ passes **210 tests** (was 175 before this slice).
 | Rust DocStore | 5 | `cargo test contracts` |
 | Rust engine framing | 4 | `cargo test engine` |
 | Rust engine round-trip (real Node) | 3 | `cargo test engine` |
-| Rust total | **68** | `cargo test` |
-| Frontend harness + a11y | 3 | `npm run test` |
-| Frontend IPC integration | 2 | `npm run test` |
-| Frontend source guards | 1 | `npm run test` |
-| Frontend total | **8** | `npm run test` |
+| Rust get_document_pdf_base64_v1 | 2 | `cargo test lib` |
+| Rust total | **70** | `cargo test` |
+| Frontend harness + a11y | 3 | `pnpm test` |
+| Frontend IPC integration | 2 | `pnpm test` |
+| Frontend source guards | 1 | `pnpm test` |
+| Frontend VisualReview | 8 | `pnpm test` |
+| Frontend template-store | 6 | `pnpm test` |
+| Frontend total | **22** | `pnpm test` |
 | Privacy service | **35** | `node --test test/privacy-service.test.js` |
-| Other Node (extract, server, providers, …) | **99** | `node --test test/*.test.js` |
+| Other Node (extract, server, providers, …) | **175** | `node --test test/*.test.js` |
 | Node total | **210** | `node --test test/*.test.js` |
-| **Grand total** | **210** | |
+| **Grand total** | **302** | |
