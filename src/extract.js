@@ -213,6 +213,374 @@ function hasLabel(matched, label) {
   return matched.some((m) => m.label === label);
 }
 
+// ───────────────────────────────────────────────────────────────────────
+// Positional extraction (WU-2C): convert pdfjs text items to page-relative
+// bounding boxes so the VisualReview SVG overlay can highlight matched fields.
+// Percentages live in [0, 100]; PDF origin is bottom-left so we flip Y before
+// emitting. Every public numeric value is rounded to two decimal places for
+// byte-stable equality across runs.
+// ───────────────────────────────────────────────────────────────────────
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Convert pdfjs page text items into position-bearing items.
+ *
+ * @param {Array} items pdfjs TextContent.items (with `str`, `transform`,
+ *   `width`). Items without a usable transform or with non-finite geometry
+ *   are dropped so callers can fall back to `bbox: null`.
+ * @param {number} pageNumber 1-indexed page number carried through to the
+ *   bbox so the SVG overlay can switch pages later.
+ * @param {{width:number,height:number}} viewport Page viewport at scale 1
+ *   (raw PDF point dimensions), used to convert PDF points to percentages.
+ * @returns {Array<{text:string,pageNumber:number,x:number,y:number,width:number,height:number}>}
+ */
+export function pageItemsFromPdfItems(items, pageNumber, viewport) {
+  const out = [];
+  if (!Array.isArray(items)) return out;
+  const pageWidth = Number(viewport?.width);
+  const pageHeight = Number(viewport?.height);
+  if (!Number.isFinite(pageWidth) || pageWidth <= 0) return out;
+  if (!Number.isFinite(pageHeight) || pageHeight <= 0) return out;
+  for (const item of items) {
+    if (!item || typeof item.str !== "string") continue;
+    const text = item.str;
+    if (!text) continue;
+    const transform = Array.isArray(item.transform) ? item.transform : null;
+    if (!transform || transform.length < 6) continue;
+    const fontSize =
+      Math.abs(Number(transform[0])) || Math.abs(Number(transform[3])) || 0;
+    const xPdf = Number(transform[4]);
+    const yPdfBaseline = Number(transform[5]);
+    const widthPdf = Number(item.width);
+    if (
+      !Number.isFinite(fontSize) ||
+      fontSize <= 0 ||
+      !Number.isFinite(xPdf) ||
+      !Number.isFinite(yPdfBaseline) ||
+      !Number.isFinite(widthPdf) ||
+      widthPdf <= 0
+    ) {
+      continue;
+    }
+    // PDF origin is bottom-left; convert to a top-left percentage so the SVG
+    // overlay in VisualReview can plot directly without further math.
+    const yTopPdf = yPdfBaseline + fontSize;
+    out.push({
+      text,
+      pageNumber,
+      x: round2((xPdf / pageWidth) * 100),
+      y: round2(((pageHeight - yTopPdf) / pageHeight) * 100),
+      width: round2((widthPdf / pageWidth) * 100),
+      height: round2((fontSize / pageHeight) * 100),
+    });
+  }
+  return out;
+}
+
+/**
+ * Group position-bearing items into lines (same page + overlapping Y-center)
+ * and emit a per-line bbox that spans every contributing item.
+ */
+export function groupTokensByLine(pageItems) {
+  const lines = [];
+  let current = null;
+  for (const item of pageItems) {
+    if (!item || typeof item.text !== "string") continue;
+    const yMid = item.y + item.height / 2;
+    const sameLine =
+      current &&
+      current.pageNumber === item.pageNumber &&
+      Math.abs(current.yMid - yMid) <=
+        Math.max(current.maxHeight, item.height);
+    if (!sameLine) {
+      if (current) finalizeLine(current, lines);
+      current = {
+        items: [item],
+        pageNumber: item.pageNumber,
+        yMid,
+        maxHeight: item.height,
+        text: item.text,
+      };
+    } else {
+      const sep =
+        current.text && !current.text.endsWith(" ") && !item.text.startsWith(" ")
+          ? " "
+          : "";
+      current.text = current.text + sep + item.text;
+      current.items.push(item);
+      current.maxHeight = Math.max(current.maxHeight, item.height);
+    }
+  }
+  if (current) finalizeLine(current, lines);
+  return lines;
+}
+
+function finalizeLine(current, lines) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxRight = -Infinity;
+  let maxBottom = -Infinity;
+  for (const it of current.items) {
+    if (it.x < minX) minX = it.x;
+    if (it.y < minY) minY = it.y;
+    if (it.x + it.width > maxRight) maxRight = it.x + it.width;
+    if (it.y + it.height > maxBottom) maxBottom = it.y + it.height;
+  }
+  lines.push({
+    text: current.text,
+    pageNumber: current.pageNumber,
+    bbox: {
+      page: current.pageNumber,
+      x: round2(minX),
+      y: round2(minY),
+      width: round2(maxRight - minX),
+      height: round2(maxBottom - minY),
+    },
+  });
+}
+
+function unionBbox(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  const minX = Math.min(a.x, b.x);
+  const minY = Math.min(a.y, b.y);
+  const maxRight = Math.max(a.x + a.width, b.x + b.width);
+  const maxBottom = Math.max(a.y + a.height, b.y + b.height);
+  return {
+    page: a.page,
+    x: round2(minX),
+    y: round2(minY),
+    width: round2(maxRight - minX),
+    height: round2(maxBottom - minY),
+  };
+}
+
+// ─── Positional matchers: mirror the text-only sliceXxx family but accept
+// lines with bboxes and return { value, bbox } so the visual review can
+// anchor each field to the PDF. ──────────────────────────────────────────
+
+function sliceDateValuePos(lines, labelRe) {
+  const dateRe = /(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})/;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const labelMatch = line.text.match(labelRe);
+    if (!labelMatch) continue;
+    const after = line.text.slice(labelMatch.index + labelMatch[0].length);
+    let valueLine = line;
+    let search = after;
+    if (!after.trim() || !dateRe.test(after)) {
+      if (i + 1 < lines.length) {
+        valueLine = lines[i + 1];
+        search = valueLine.text;
+      }
+    }
+    const dateMatch = search.match(dateRe);
+    if (!dateMatch) continue;
+    if (!isValidDate(dateMatch[3], dateMatch[2], dateMatch[1])) continue;
+    return {
+      value: `${dateMatch[3].padStart(4, "0")}-${dateMatch[2].padStart(2, "0")}-${dateMatch[1].padStart(2, "0")}`,
+      bbox: line === valueLine ? line.bbox : unionBbox(line.bbox, valueLine.bbox),
+    };
+  }
+  return null;
+}
+
+function sliceLabelPos(lines, labelRe, maxValueChars) {
+  for (const line of lines) {
+    const match = line.text.match(labelRe);
+    if (!match) continue;
+    const after = line.text.slice(match.index + match[0].length).trim();
+    if (!after) continue;
+    const stop = after.match(
+      /\b(?:fecha\s+factura|n[º°\.]?\s*factura|subtotal|igic|iva|importe\s+total|total)\b/i,
+    );
+    const value = (stop ? after.slice(0, stop.index) : after)
+      .replace(/^[\s:;.,]+/, "")
+      .replace(/\s+(?:eur|euros|\u20ac)\s*$/i, "")
+      .trim();
+    if (!value) continue;
+    if (value.length > maxValueChars) continue;
+    return { value, bbox: line.bbox };
+  }
+  return null;
+}
+
+function sliceAmountPos(lines, labelRe) {
+  const result = sliceLabelPos(lines, labelRe, 32);
+  if (!result) return null;
+  const raw = result.value;
+  if (/[-+]/.test(raw)) return null;
+  const tokens = raw.match(AMOUNT_RE);
+  if (!tokens || tokens.length === 0) return null;
+  const candidate = tokens[0];
+  const remainder = raw
+    .slice(candidate.length)
+    .replace(/\s+(?:eur|euros|\u20ac)\s*$/i, "");
+  if (/[\d.,]/.test(remainder)) return null;
+  const value = normalizeDecimal(candidate);
+  if (!value) return null;
+  return { value, bbox: result.bbox };
+}
+
+function sliceTaxLabelPos(lines) {
+  for (const line of lines) {
+    const m = line.text.match(LABEL_TAX_RE);
+    if (!m) continue;
+    const head = line.text.slice(m.index, m.index + m[0].length);
+    const upper = head.toUpperCase();
+    let value = null;
+    if (/\bIGIC\b|\bI\.G\.I\.C\.\b/.test(upper)) value = "IGIC";
+    else if (/\bIVA\b/.test(upper)) value = "IVA";
+    else if (/\bTAX\b|\bTAXES\b/.test(upper)) value = "TAX";
+    if (!value) continue;
+    return { value, bbox: line.bbox };
+  }
+  return null;
+}
+
+function makeMatchedFieldWithBbox(label, value, bbox) {
+  return { label, value: value ?? null, bbox: bbox ?? null, editable: true };
+}
+
+/**
+ * Extract invoice fields from a stream of pre-grouped lines (each with a
+ * bbox). Mirrors `extractInvoiceFields` but populates `bbox` on every matched
+ * entry so the VisualReview overlay can highlight the source location.
+ *
+ * Lines that lack a bbox (e.g. when the caller passes synthetic text) fall
+ * back to `bbox: null`, preserving the text-only contract.
+ */
+export function extractInvoiceFieldsFromLines(lines) {
+  const input = Array.isArray(lines) ? lines : [];
+  const matched = [];
+
+  const invoiceDate = sliceDateValuePos(input, LABEL_INVOICE_DATE_RE);
+  if (invoiceDate) {
+    matched.push(
+      makeMatchedFieldWithBbox("invoiceDate", invoiceDate.value, invoiceDate.bbox),
+    );
+  }
+
+  const simplifiedInvoiceDate = sliceDateValuePos(
+    input,
+    LABEL_SIMPLIFIED_DATE_RE,
+  );
+  if (simplifiedInvoiceDate) {
+    matched.push(
+      makeMatchedFieldWithBbox(
+        "simplifiedInvoiceDate",
+        simplifiedInvoiceDate.value,
+        simplifiedInvoiceDate.bbox,
+      ),
+    );
+  }
+
+  const invoiceNumber = sliceLabelPos(
+    input,
+    LABEL_INVOICE_NUMBER_RE,
+    INVOICE_FIELD_LIMITS.maxInvoiceNumber,
+  );
+  if (invoiceNumber) {
+    matched.push(
+      makeMatchedFieldWithBbox(
+        "invoiceNumber",
+        invoiceNumber.value,
+        invoiceNumber.bbox,
+      ),
+    );
+  }
+
+  const subtotal = sliceAmountPos(input, LABEL_SUBTOTAL_RE);
+  if (subtotal) {
+    matched.push(
+      makeMatchedFieldWithBbox("subtotal", subtotal.value, subtotal.bbox),
+    );
+  }
+
+  const taxLabel = sliceTaxLabelPos(input);
+  if (taxLabel) {
+    matched.push(
+      makeMatchedFieldWithBbox("taxLabel", taxLabel.value, taxLabel.bbox),
+    );
+  }
+
+  const tax = sliceAmountPos(input, LABEL_TAX_RE);
+  if (tax) {
+    matched.push(makeMatchedFieldWithBbox("tax", tax.value, tax.bbox));
+  }
+
+  const total = sliceAmountPos(input, LABEL_TOTAL_RE);
+  if (total) {
+    matched.push(makeMatchedFieldWithBbox("total", total.value, total.bbox));
+  }
+
+  return {
+    invoiceDate: invoiceDate?.value ?? null,
+    simplifiedInvoiceDate: simplifiedInvoiceDate?.value ?? null,
+    invoiceNumber: invoiceNumber?.value ?? null,
+    taxLabel: taxLabel?.value ?? null,
+    totals: {
+      subtotal: subtotal?.value ?? null,
+      tax: tax?.value ?? null,
+      total: total?.value ?? null,
+    },
+    matched,
+    labels: INVOICE_LABEL_HINT,
+    untrusted: true,
+    trustBoundary: INVOICE_UNTRUSTED,
+  };
+}
+
+// Merge vendor-specific extraction into the positional base fields. Vendor
+// parsers are text-only regexes, so any vendor-only field gets `bbox: null`
+// (the vendor regex matched the text but we have no positional anchor for
+// it). When a vendor field overlaps a base field the base entry keeps its
+// bbox — only the top-level value is overridden, mirroring enrichInvoiceFields.
+function mergeBaseFieldsWithVendor(base, vendorResult) {
+  if (!vendorResult) return base;
+  const matched = [...base.matched];
+  const totals = { ...base.totals };
+  const merged = { ...base, vendor: vendorResult.vendor, totals };
+  const vendorFields = vendorResult.fields;
+  if (vendorFields.invoiceNumber != null) {
+    merged.invoiceNumber = vendorFields.invoiceNumber;
+    if (!hasLabel(matched, "invoiceNumber")) {
+      matched.push(
+        makeMatchedFieldWithBbox("invoiceNumber", vendorFields.invoiceNumber, null),
+      );
+    }
+  }
+  if (vendorFields.invoiceDate != null) {
+    merged.invoiceDate = vendorFields.invoiceDate;
+    if (!hasLabel(matched, "invoiceDate")) {
+      matched.push(
+        makeMatchedFieldWithBbox("invoiceDate", vendorFields.invoiceDate, null),
+      );
+    }
+  }
+  if (vendorFields.taxLabel != null) {
+    merged.taxLabel = vendorFields.taxLabel;
+    if (!hasLabel(matched, "taxLabel")) {
+      matched.push(
+        makeMatchedFieldWithBbox("taxLabel", vendorFields.taxLabel, null),
+      );
+    }
+  }
+  for (const key of ["subtotal", "tax", "total"]) {
+    if (vendorFields.totals?.[key] != null) {
+      totals[key] = vendorFields.totals[key];
+      if (!hasLabel(matched, key)) {
+        matched.push(makeMatchedFieldWithBbox(key, totals[key], null));
+      }
+    }
+  }
+  merged.matched = matched;
+  return merged;
+}
+
 // Deterministic invoice-field extractor. Runs over already-extracted text,
 // before any PII redaction pass on the free text. Every value is a plain
 // string, every parse path is regex-only, every result is labeled untrusted.
@@ -380,6 +748,11 @@ export async function extractTextFromPdf(buffer, options = {}) {
   const declaredPages = Number(doc?.numPages) || 0;
   const pagesToRead = Math.min(declaredPages || maxPages, maxPages);
   const pieces = [];
+  // WU-2C: accumulate position-bearing items across pages so the field
+  // extractor can stamp bboxes on every matched entry. Items without valid
+  // transforms (OCR-only, malformed PDFs) are simply absent — matched fields
+  // derived from those items fall back to bbox: null.
+  const allPageItems = [];
   let totalChars = 0;
   let charLimitHit = false;
 
@@ -402,11 +775,29 @@ export async function extractTextFromPdf(buffer, options = {}) {
       }
       let content;
       try {
-        content = await page.getTextContent({ disableCombineTextItems: false });
+        // disableCombineTextItems: true keeps each text run separate so we
+        // can read its own transform; the combined view would collapse them
+        // into a single item with only the first run's geometry.
+        content = await page.getTextContent({ disableCombineTextItems: true });
       } catch {
         continue;
       }
       const items = Array.isArray(content?.items) ? content.items : [];
+
+      // WU-2C: capture positional bbox data for this page. The viewport at
+      // scale 1 gives us raw PDF point dimensions, which we use as the
+      // denominator for the percentage conversion.
+      try {
+        const viewport = page.getViewport({ scale: 1 });
+        for (const item of pageItemsFromPdfItems(items, pageNumber, viewport)) {
+          allPageItems.push(item);
+        }
+      } catch {
+        // best-effort: skip positional capture if viewport throws; matched
+        // fields on this page will then carry bbox: null but text extraction
+        // continues.
+      }
+
       const pageText = items.map(normalizeItem).filter(Boolean).join(" ").trim();
       if (!pageText) continue;
       const remaining = Math.max(0, maxChars - totalChars);
@@ -448,12 +839,22 @@ export async function extractTextFromPdf(buffer, options = {}) {
           : charLimitHit
             ? "maxChars"
             : null;
+
+      // WU-2C: run the positional extractor over the accumulated page items so
+      // every matched field carries the page-relative bbox the VisualReview
+      // overlay expects. Vendor regex still runs against the plain-text join
+      // (vendor parsers are text-only by design).
+      const lines = groupTokensByLine(allPageItems);
+      const baseFields = extractInvoiceFieldsFromLines(lines);
+      const vendorResult = parseVendorInvoice(joined);
+      const invoiceFields = mergeBaseFieldsWithVendor(baseFields, vendorResult);
+
       return {
         text,
         pages: pagesToRead,
         truncated,
         truncationReason,
         applied: { maxPages, maxChars },
-        invoiceFields: enrichInvoiceFields(joined),
+        invoiceFields,
       };
     }

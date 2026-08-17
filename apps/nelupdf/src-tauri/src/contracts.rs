@@ -440,17 +440,22 @@ pub struct InvoiceTotalsV1 {
     pub total: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// Field bboxes are page-relative percentages in [0, 100]. The Node sidecar
+// rounds each value to two decimal places (see src/extract.js), so we keep
+// f64 here so the wire format can carry 4.90 / 4.29 / 1.01 etc. without
+// silently truncating to integers. f64 does not implement Eq, so the Eq
+// bound is dropped from this struct and its parents below.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct FieldBboxV1 {
     pub page: u32,
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MatchedFieldV1 {
     pub label: String,
@@ -459,7 +464,7 @@ pub struct MatchedFieldV1 {
     pub editable: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct InvoiceFieldsV1 {
     pub invoice_number: Option<String>,
@@ -470,7 +475,7 @@ pub struct InvoiceFieldsV1 {
     pub matched: Vec<MatchedFieldV1>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LocalExtractionV1 {
     pub provenance: String,

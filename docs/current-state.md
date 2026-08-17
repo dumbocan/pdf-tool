@@ -1,6 +1,13 @@
 # Current State
 
-WU-2B (Visual Review UI + template store) landed on `wu-2b`. The new
+WU-2C (positional bbox extraction) landed on `wu-2c`. The Node sidecar now
+surfaces page-relative percentages for every matched invoice field from
+pdfjs-dist text items, so the WU-2B VisualReview SVG overlay has real
+rectangles to draw. Empty/OCR PDFs still fall back to `bbox: null` and the
+Rust contract switched `FieldBboxV1` from `u32` to `f64` so the wire format
+can carry `4.90` / `4.29` / `1.01` etc. without losing precision.
+
+WU-2B (Visual Review UI + template store) shipped on `wu-2b`. The new
 `LocalExtractionV1.invoice.matched: MatchedField[]` carries `bbox: Bbox | null`
 plus editable flag, the Rust sidecar grew a `get_document_pdf_base64_v1`
 command, and the App routes extraction through a color-coded overlay where
@@ -12,6 +19,32 @@ provider registry. 35 dedicated tests in `test/privacy-service.test.js` cover Bo
 shape, atomic single-use confirm, expiry / mismatch / replay rejection, outbound payload hygiene
 (PDF artifacts scrubbed, PII and amounts pseudonymized, canonical JSON with sorted keys), and
 content-free audit evidence.
+
+## Node sidecar (`src/extract.js`)
+
+- **WU-2C**: positional bbox extraction. The page loop now calls
+  `page.getTextContent({ disableCombineTextItems: true })` and feeds each item
+  into `pageItemsFromPdfItems(items, pageNumber, viewport)`, which converts the
+  PDF transform `[a,b,c,d,e,f]` into page-relative percentages (`x=e/width`,
+  `y=(height-(f+a))/height`, `width=item.width/width`, `height=a/height`) and
+  rounds to two decimals. Items with missing or non-finite transforms / widths
+  are dropped so OCR-only pages leave `bbox: null` on their matched fields.
+- `groupTokensByLine(pageItems)` clusters items by overlapping Y-centers into
+  one line each, with a span bbox covering every contributing item.
+- `sliceDateValuePos` / `sliceLabelPos` / `sliceAmountPos` / `sliceTaxLabelPos`
+  mirror the text-only `sliceXxx` family but return `{ value, bbox }` so the
+  matched field carries the right anchor. Date-on-next-line still works; the
+  bbox is the union of the label and value lines.
+- `extractInvoiceFieldsFromLines(lines)` is the new public positional entry
+  point (`src/extract.js`). `mergeBaseFieldsWithVendor` keeps the WU-2B
+  vendor-merging contract: vendor-only fields keep `bbox: null` because
+  vendor parsers are text-only regexes; overlapping fields preserve the base
+  bbox.
+- `extractTextFromPdf` keeps the same return shape (`text`, `pages`,
+  `truncated`, `truncationReason`, `applied`, `invoiceFields`) and now stamps
+  bboxes on every matched field whose label came from a position-bearing item.
+  Vendor parsing still runs against the plain-text `joined` join (vendor regex
+  is unchanged).
 
 ## Rust backend (`apps/nelupdf/src-tauri`)
 
@@ -117,6 +150,7 @@ passes **210 tests** (was 175 before this slice).
 | Frontend template-store | 6 | `pnpm test` |
 | Frontend total | **22** | `pnpm test` |
 | Privacy service | **35** | `node --test test/privacy-service.test.js` |
-| Other Node (extract, server, providers, …) | **175** | `node --test test/*.test.js` |
-| Node total | **210** | `node --test test/*.test.js` |
-| **Grand total** | **302** | |
+| extract (text + bbox) | **19** | `node --test test/extract.test.js` |
+| Other Node (server, providers, vendor-parsers, …) | **162** | `node --test test/*.test.js` |
+| Node total | **216** | `node --test test/*.test.js` |
+| **Grand total** | **308** | |

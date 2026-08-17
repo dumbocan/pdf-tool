@@ -1,17 +1,11 @@
 # Next Session
 
-WU-2B (Visual Review UI + template store) is on `wu-2b`. The UI takes
-`MatchedField[]` from `LocalExtractionV1.invoice.matched`, but every field
-currently has `bbox: null` because the Node sidecar still extracts via plain
-text — coordinates are not produced yet. Follow-ups:
+WU-2C (positional bbox extraction) is on `wu-2c`. The Node sidecar now stamps
+page-relative percentages on every matched invoice field from pdfjs-dist text
+items, the Rust `FieldBboxV1` switched to `f64` so the wire format carries
+fractional percentages, and the VisualReview SVG overlay finally has real
+rectangles to draw. Empty/OCR PDFs still fall back to `bbox: null`. Follow-ups:
 
-- **WU-2C** — populate real `bbox` values in `src/extract.js`. The
-  `pdf-parse` / `pdfjs-dist` text extractor used in the sidecar already
-  returns positional info for each text item; the work is to surface those
-  positions in `MatchedField.bbox` (page-relative percentages) when the
-  extractor actually locates the value. Until then the Visual Review's SVG
-  overlay has nothing to draw and the App.tsx integration falls straight
-  through to row creation when `matched` is empty (no template → no review).
 - **WU-2D** — multi-file review UX. Currently `processFiles` runs each
   file's extraction sequentially and `setReview` overwrites state, so a
   multi-file upload that triggers review on more than one doc shows only
@@ -27,9 +21,9 @@ text — coordinates are not produced yet. Follow-ups:
 - Open questions:
   - The pre-existing `cargo clippy --all-targets -- -D warnings` error in
   `engine.rs:326` (`assert_eq!(local.untrusted, true)`) is unrelated to
-  WU-2B — it predates the work and the test still passes. Fixing the
-  test assertion to `assert!(local.untrusted)` is a one-liner; defer it
-  to a follow-up or fold into WU-2C.
+  WU-2B / WU-2C — it predates the work and the test still passes. Fixing
+  the test assertion to `assert!(local.untrusted)` is a one-liner; defer it
+  to a follow-up.
   - `pdfjs-dist@4` adds ~2.2 MB to the build (`dist/assets/pdf.worker-*.mjs`).
   Acceptable for desktop; not relevant if a web-only fallback is ever
   requested.
@@ -37,3 +31,12 @@ text — coordinates are not produced yet. Follow-ups:
   `new URL("pdfjs-dist/build/pdf.worker.mjs", import.meta.url)` pattern;
   no extra `vite.config.ts` change was needed beyond installing the
   package. Confirm in CI that the worker asset ships in `dist/`.
+  - The WU-2C synthetic-PDF test fixture uses separate `BT ... ET` per text
+  run; pdfjs silently merges sibling Tj operations inside one BT/ET block
+  into a single item, which would collapse positional anchors and defeat
+  the bbox exercise. Any future multi-line PDF fixture must keep each Tj
+  in its own BT/ET pair.
+  - `FieldBboxV1` now uses `f64`; `Eq` was dropped from `MatchedFieldV1`,
+  `InvoiceFieldsV1`, and `LocalExtractionV1` derives (f64 doesn't impl Eq).
+  Anything that compares these types with `==` on a MatchedField needs to
+  be reworked.
