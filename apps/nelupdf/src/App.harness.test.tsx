@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 import appSource from "./App.tsx?raw";
+import type { DesktopApi } from "./lib/desktop-api";
+import type { LocalExtractionV1 } from "./lib/types";
 
 afterEach(clearMocks);
 
@@ -14,6 +16,55 @@ async function assertNoA11yViolations(container: HTMLElement) {
   if (result.violations.length > 0) {
     throw new Error(result.violations.map(({ id }) => id).join(", "));
   }
+}
+
+function extraction(
+  overrides: Partial<LocalExtractionV1> = {},
+): LocalExtractionV1 {
+  return {
+    provenance: "local_deterministic",
+    documentSha256: "sha256",
+    status: "complete",
+    pagesProcessed: 1,
+    truncationReason: null,
+    extractionMode: "digital_text",
+    invoice: {
+      invoiceNumber: "A-1",
+      invoiceDate: "2026-08-17",
+      simplifiedInvoiceDate: "2026-08-17",
+      taxLabel: "IVA",
+      totals: { subtotal: "10", tax: "2.1", total: "12.1" },
+      matched: ["invoiceNumber", "total"],
+    },
+    untrusted: true,
+    ...overrides,
+  };
+}
+
+function fakeApi(result: Awaited<ReturnType<DesktopApi["extractLocal"]>>): DesktopApi {
+  return {
+    registerDocument: async () => ({
+      documentId: "document-1",
+      displayName: "invoice.pdf",
+      byteLength: 4,
+    }),
+    extractLocal: async () => result,
+  };
+}
+
+async function uploadPdf(api: DesktopApi) {
+  const user = userEvent.setup();
+  const { container } = render(<App api={api} />);
+  const fileInput =
+    container.querySelector<HTMLInputElement>('input[type="file"]');
+  Object.defineProperty(File.prototype, "arrayBuffer", {
+    configurable: true,
+    value: async () => new TextEncoder().encode("%PDF").buffer,
+  });
+  await user.upload(
+    fileInput!,
+    new File(["%PDF"], "invoice.pdf", { type: "application/pdf" }),
+  );
 }
 
 describe("NeluPDF selection screen", () => {
@@ -84,6 +135,51 @@ describe("NeluPDF selection screen", () => {
       "register_document_v1",
       "extract_local_v1",
     ]);
+    expect(screen.getByText("✔ Completa")).toBeInTheDocument();
+  });
+
+  it("renders partial extraction as requiring unavailable OCR", async () => {
+    await uploadPdf(
+      fakeApi({
+        ok: true,
+        protocolVersion: 1,
+        requestId: "123e4567-e89b-42d3-a456-426614174001",
+        data: extraction({
+          status: "partial",
+          extractionMode: "ocr_required_unavailable",
+          invoice: {
+            ...extraction().invoice,
+            invoiceNumber: null,
+            totals: { subtotal: null, tax: null, total: null },
+          },
+        }),
+      }),
+    );
+
+    expect(
+      (await screen.findAllByText("Parcial: requiere OCR, no disponible"))
+        .length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("maps typed extraction errors to human-friendly UI text", async () => {
+    await uploadPdf(
+      fakeApi({
+        ok: false,
+        protocolVersion: 1,
+        requestId: "123e4567-e89b-42d3-a456-426614174001",
+        error: {
+          code: "engine_unavailable",
+          messageKey: "engine_unavailable",
+          retry: "restart_app",
+        },
+      }),
+    );
+
+    expect(
+      await screen.findByText("⚠ El motor de extracción no está disponible"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("engine_unavailable")).not.toBeInTheDocument();
   });
 
   it("exposes the real PDF selection path with a role and accessible name", () => {

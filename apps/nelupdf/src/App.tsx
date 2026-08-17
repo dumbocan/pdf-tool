@@ -6,16 +6,37 @@ import {
   type DesktopApi,
 } from "./lib/desktop-api";
 import { uuidv4 } from "./lib/uuid";
+import type { LocalExtractionV1, PublicError } from "./lib/types";
+
+type ExtractionState =
+  | "idle"
+  | "registering"
+  | "ready"
+  | "extracting"
+  | "complete"
+  | "truncated"
+  | "partial"
+  | "cancelled"
+  | "invalid-input"
+  | "engine-unavailable"
+  | "timeout"
+  | "cancellation"
+  | "bounded-resource"
+  | "engine_error"
+  | "native-path-unavailable";
 
 type Row = {
   file: string;
   invoiceNumber: string;
   invoiceDate: string;
+  simplifiedInvoiceDate: string;
   total: string;
   subtotal: string;
   tax: string;
   taxLabel: string;
-  error?: string;
+  matched: string[];
+  state: ExtractionState;
+  error?: PublicError;
 };
 
 type Progress = { file: string; index: number; total: number };
@@ -27,8 +48,11 @@ type AppProps = { api?: DesktopApi };
 function App({ api = desktopApi }: AppProps) {
   const [rows, setRows] = useState<Row[]>([]);
   const [processing, setProcessing] = useState(false);
+  const [extractionState, setExtractionState] =
+    useState<ExtractionState>("idle");
   const [progress, setProgress] = useState<Progress | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [preview, setPreview] = useState<{
     row: Row;
     notice: string;
@@ -37,7 +61,6 @@ function App({ api = desktopApi }: AppProps) {
   } | null>(null);
   const [llmBusy, setLlmBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const processingSet = useRef<Set<string>>(new Set());
 
   const extractFile = useCallback(async (file: File): Promise<Row> => {
     const buf = new Uint8Array(await file.arrayBuffer());
@@ -49,38 +72,31 @@ function App({ api = desktopApi }: AppProps) {
     let base64 = btoa(binary);
     try {
       const requestId = uuidv4();
+      setExtractionState("registering");
       const registered = await api.registerDocument({
         requestId,
         name: file.name,
         declaredBytes: buf.byteLength,
         pdfBase64: base64,
       });
+      setExtractionState("ready");
+      setExtractionState("extracting");
       const result = await api.extractLocal({
         requestId: uuidv4(),
         documentId: registered.documentId,
       });
       if (!result.ok) {
-        return {
-          file: file.name,
-          invoiceNumber: "",
-          invoiceDate: "",
-          total: "",
-          subtotal: "",
-          tax: "",
-          taxLabel: "",
-          error: result.error.messageKey,
-        };
+        const state = stateForError(result.error);
+        setExtractionState(state);
+        return emptyRow(file.name, state, result.error);
       }
-      const { invoice } = result.data;
-      return {
-        file: file.name,
-        invoiceNumber: invoice.invoiceNumber ?? "",
-        invoiceDate: invoice.invoiceDate ?? "",
-        subtotal: invoice.totals.subtotal ?? "",
-        tax: invoice.totals.tax ?? "",
-        total: invoice.totals.total ?? "",
-        taxLabel: invoice.taxLabel ?? "",
-      };
+      const state = stateForExtraction(result.data);
+      setExtractionState(state);
+      return rowFromExtraction(file.name, result.data, state);
+    } catch {
+      const error = internalError();
+      setExtractionState("engine_error");
+      return emptyRow(file.name, "engine_error", error);
     } finally {
       base64 = "";
     }
@@ -95,17 +111,8 @@ function App({ api = desktopApi }: AppProps) {
         setProgress({ file: files[i].name, index: i + 1, total: files.length });
         try {
           out.push(await extractFile(files[i]));
-        } catch (error) {
-          out.push({
-            file: files[i].name,
-            invoiceNumber: "",
-            invoiceDate: "",
-            total: "",
-            subtotal: "",
-            tax: "",
-            taxLabel: "",
-            error: String(error),
-          });
+        } catch {
+          out.push(emptyRow(files[i].name, "engine_error", internalError()));
         }
       }
       setRows((prev) => [...prev, ...out]);
@@ -117,47 +124,10 @@ function App({ api = desktopApi }: AppProps) {
 
   const processPaths = useCallback(async (paths: string[]) => {
     if (paths.length === 0) return;
-    // Dedupe: el drag&drop nativo de Tauri puede disparar 'drop' más de una vez
-    // y/o junto al handler del DOM — nunca procesar el mismo path dos veces.
-    const fresh = paths.filter((p) => !processingSet.current.has(p));
-    if (fresh.length === 0) return;
-    for (const p of fresh) processingSet.current.add(p);
-    setProcessing(true);
-    const out: Row[] = [];
-    for (let i = 0; i < paths.length; i += 1) {
-      setProgress({
-        file: paths[i].split(/[\\/]/).pop() ?? paths[i],
-        index: i + 1,
-        total: paths.length,
-      });
-      try {
-        out.push({
-          file: paths[i].split(/[\\/]/).pop() ?? paths[i],
-          invoiceNumber: "",
-          invoiceDate: "",
-          total: "",
-          subtotal: "",
-          tax: "",
-          taxLabel: "",
-          error: "La importación de rutas nativas no está disponible en esta versión.",
-        });
-      } catch (error) {
-        out.push({
-          file: paths[i],
-          invoiceNumber: "",
-          invoiceDate: "",
-          total: "",
-          subtotal: "",
-          tax: "",
-          taxLabel: "",
-          error: String(error),
-        });
-      }
-    }
-    setRows((prev) => [...prev, ...out]);
-    for (const p of fresh) processingSet.current.delete(p);
-    setProgress(null);
-    setProcessing(false);
+    setExtractionState("native-path-unavailable");
+    setNotice(
+      "Extracción desde rutas de archivo no disponible en esta versión. Usá el selector de archivos.",
+    );
   }, []);
 
   // Drag&drop NATIVO de Tauri: WebKit intercepta los archivos del sistema y no
@@ -199,14 +169,14 @@ function App({ api = desktopApi }: AppProps) {
 
   const requestLlmPreview = useCallback(async (row: Row) => {
     void row;
-    alert("La extracción con IA estará disponible en una versión futura.");
+    setNotice("La extracción con IA no está disponible en esta versión.");
   }, []);
 
   const confirmLlm = useCallback(async () => {
     if (!preview) return;
     setLlmBusy(true);
     try {
-      alert("La extracción con IA estará disponible en una versión futura.");
+      setNotice("La extracción con IA no está disponible en esta versión.");
     } finally {
       setLlmBusy(false);
       setPreview(null);
@@ -255,7 +225,19 @@ function App({ api = desktopApi }: AppProps) {
 
       {progress && (
         <div className="progress">
-          Procesando {progress.index}/{progress.total}: {progress.file}
+          Procesando {progress.index}/{progress.total}: {progress.file} ({stateLabel(extractionState)})
+        </div>
+      )}
+
+      {notice && (
+        <div className="progress" role="status">
+          {notice}
+        </div>
+      )}
+
+      {extractionState !== "idle" && !progress && !notice && (
+        <div className="progress" role="status">
+          {stateLabel(extractionState)}
         </div>
       )}
 
@@ -296,9 +278,11 @@ function App({ api = desktopApi }: AppProps) {
                   <td>{r.total}</td>
                   <td>
                     {r.error ? (
-                      `⚠ ${r.error}`
-                    ) : r.total ? (
-                      "✔"
+                      `⚠ ${errorMessage(r.error)}`
+                    ) : r.state === "complete" || r.state === "truncated" ? (
+                      `✔ ${stateLabel(r.state)}`
+                    ) : r.state === "partial" ? (
+                      stateLabel(r.state)
                     ) : (
                       <button
                         onClick={() => requestLlmPreview(r)}
@@ -376,6 +360,136 @@ function csvCell(v: string) {
   const s = String(v ?? "");
   if (/^[=+\-@]/.test(s)) return `"${s}"`;
   return s.includes(",") ? `"${s}"` : s;
+}
+
+function emptyRow(file: string, state: ExtractionState, error?: PublicError): Row {
+  return {
+    file,
+    invoiceNumber: "",
+    invoiceDate: "",
+    simplifiedInvoiceDate: "",
+    total: "",
+    subtotal: "",
+    tax: "",
+    taxLabel: "",
+    matched: [],
+    state,
+    error,
+  };
+}
+
+function rowFromExtraction(
+  file: string,
+  result: LocalExtractionV1,
+  state: ExtractionState,
+): Row {
+  const { invoice } = result;
+  return {
+    file,
+    invoiceNumber: invoice.invoiceNumber ?? "",
+    invoiceDate: invoice.invoiceDate ?? "",
+    simplifiedInvoiceDate: invoice.simplifiedInvoiceDate ?? "",
+    subtotal: invoice.totals.subtotal ?? "",
+    tax: invoice.totals.tax ?? "",
+    total: invoice.totals.total ?? "",
+    taxLabel: invoice.taxLabel ?? "",
+    matched: invoice.matched,
+    state,
+  };
+}
+
+function stateForExtraction(result: LocalExtractionV1): ExtractionState {
+  if (result.status === "partial") return "partial";
+  if (result.status === "truncated") return "truncated";
+  return "complete";
+}
+
+function stateForError(error: PublicError): ExtractionState {
+  switch (error.code) {
+    case "invalid_request":
+    case "invalid_pdf":
+    case "unauthorized_document":
+      return "invalid-input";
+    case "engine_unavailable":
+      return "engine-unavailable";
+    case "timeout":
+      return "timeout";
+    case "cancelled":
+      return "cancelled";
+    case "input_too_large":
+    case "page_limit":
+    case "response_too_large":
+    case "capacity_exhausted":
+    case "ocr_resource_limit":
+      return "bounded-resource";
+    default:
+      return "engine_error";
+  }
+}
+
+function errorMessage(error: PublicError): string {
+  switch (error.code) {
+    case "invalid_request":
+    case "invalid_pdf":
+    case "unauthorized_document":
+      return "Archivo inválido o datos incorrectos";
+    case "input_too_large":
+      return "El PDF supera el límite de 12 MB";
+    case "page_limit":
+      return "El PDF supera el límite de 100 páginas";
+    case "engine_unavailable":
+      return "El motor de extracción no está disponible";
+    case "engine_lost":
+      return "Error de comunicación con el motor";
+    case "protocol_mismatch":
+      return "Error de protocolo inesperado";
+    case "timeout":
+      return "La extracción excedió el tiempo límite";
+    case "cancelled":
+      return "Extracción cancelada";
+    case "internal":
+      return "Error interno. Por favor, informá un bug.";
+    default:
+      return "No se pudo completar la extracción";
+  }
+}
+
+function stateLabel(state: ExtractionState): string {
+  switch (state) {
+    case "registering":
+      return "Registrando PDF...";
+    case "ready":
+      return "PDF listo para extraer";
+    case "extracting":
+      return "Extrayendo...";
+    case "complete":
+      return "Completa";
+    case "truncated":
+      return "Extracción limitada por recursos";
+    case "partial":
+      return "Parcial: requiere OCR, no disponible";
+    case "cancelled":
+    case "cancellation":
+      return "Extracción cancelada";
+    case "invalid-input":
+      return "Archivo inválido o datos incorrectos";
+    case "engine-unavailable":
+      return "El motor de extracción no está disponible";
+    case "timeout":
+      return "La extracción excedió el tiempo límite";
+    case "bounded-resource":
+      return "Extracción limitada por recursos";
+    case "engine_error":
+      return "Error del motor de extracción";
+    case "native-path-unavailable":
+      return "Usá el selector de archivos";
+    default:
+      return "Listo";
+  }
+}
+
+function internalError(): PublicError {
+  return { code: "internal", messageKey: "internal", retry: "never" };
 }
 
 export default App;
