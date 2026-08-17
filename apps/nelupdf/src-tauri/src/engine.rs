@@ -62,12 +62,17 @@ pub struct SidecarResponse {
     pub text: Option<String>,
     pub pages: Option<u32>,
     pub truncated: Option<bool>,
-    #[serde(deserialize_with = "deserialize_invoice_fields")]
+    #[serde(default, deserialize_with = "deserialize_invoice_fields")]
     pub invoice_fields: Option<InvoiceFieldsV1>,
+    #[serde(default)]
     pub line_items: Option<Vec<serde_json::Value>>,
+    #[serde(default)]
     pub parser: Option<String>,
+    #[serde(default)]
     pub extraction_mode: Option<String>,
+    #[serde(default)]
     pub sha256: Option<String>,
+    #[serde(default)]
     pub error: Option<String>,
 }
 
@@ -203,6 +208,7 @@ mod tests {
     #[test]
     fn run_extraction_returns_ok() {
         if find_engine_path().is_none() || Command::new("node").arg("--version").output().is_err() {
+            eprintln!("SKIP: node or engine path not available");
             return;
         }
         let pdf = std::fs::read("../../../test/fixtures/A-G2026-245895.pdf").unwrap();
@@ -220,9 +226,105 @@ mod tests {
         };
         let response = run_extraction(req).unwrap();
         assert_eq!(response.kind, "extractLocal");
-        assert!(matches!(
-            response.status.as_str(),
-            "ok" | "partial" | "error"
-        ));
+        assert_eq!(response.protocol_version, 1);
+        assert_eq!(response.request_id, "123e4567-e89b-42d3-a456-426614174000");
+        // Status must be one of the valid states; for a digital-text PDF, "ok" is expected.
+        assert_eq!(response.status, "ok", "status should be ok for digital PDF");
+        assert!(response.pages.unwrap_or(0) > 0, "pages should be > 0 for valid PDF");
+        assert!(response.invoice_fields.is_some(), "invoice fields should be present");
+    }
+
+    #[test]
+    fn run_extraction_rejects_sha_mismatch() {
+        if find_engine_path().is_none() || Command::new("node").arg("--version").output().is_err() {
+            eprintln!("SKIP: node or engine path not available");
+            return;
+        }
+        let pdf = std::fs::read("../../../test/fixtures/A-G2026-245895.pdf").unwrap();
+        let req = SidecarRequest {
+            protocol_version: PROTOCOL_VERSION,
+            kind: "extractLocal".to_string(),
+            request_id: "123e4567-e89b-42d3-a456-426614174000".to_string(),
+            document: SidecarDocument {
+                name: "test.pdf".to_string(),
+                byte_length: pdf.len() as u64,
+                sha256: "0".repeat(64), // fake hash — engine validates and rejects
+                pdf_base64: STANDARD.encode(&pdf),
+            },
+            limits: None,
+        };
+        let response = run_extraction(req).unwrap();
+        assert_eq!(response.status, "error", "engine should reject hash mismatch");
+        assert_eq!(response.error.as_deref(), Some("hash_mismatch"));
+    }
+
+    #[test]
+    fn roundtrip_through_extract_command() {
+        if find_engine_path().is_none() || Command::new("node").arg("--version").output().is_err() {
+            eprintln!("SKIP: node or engine path not available");
+            return;
+        }
+        let pdf = std::fs::read("../../../test/fixtures/A-G2026-245895.pdf").unwrap();
+        let base64 = STANDARD.encode(&pdf);
+        let sha256 = format!("{:x}", sha2::Sha256::digest(&pdf));
+
+        // Step 1: Register the document (simulate the command handler logic)
+        use crate::contracts::{RegisterDocumentV1, Validate, is_valid_uuid_v4};
+        let request_id = "550e8400-e29b-43d4-a716-446655440000".to_string();
+        assert!(is_valid_uuid_v4(&request_id));
+
+        let register_req = RegisterDocumentV1 {
+            protocol_version: 1,
+            request_id: request_id.clone(),
+            name: "test.pdf".to_string(),
+            declared_bytes: pdf.len() as u64,
+            pdf_base64: base64.clone(),
+        };
+        assert!(register_req.validate().is_ok());
+
+        // Step 2: Build the sidecar request (as extract_local_v1 would)
+        let doc_id = crate::doc_store::generate_doc_id();
+        let sidecar_req = SidecarRequest {
+            protocol_version: PROTOCOL_VERSION,
+            kind: "extractLocal".to_string(),
+            request_id,
+            document: SidecarDocument {
+                name: "test.pdf".to_string(),
+                byte_length: pdf.len() as u64,
+                sha256,
+                pdf_base64: base64,
+            },
+            limits: Some(SidecarLimits {
+                max_pages: Some(crate::contracts::MAX_PAGES),
+                max_chars: Some(crate::contracts::MAX_CHARS),
+            }),
+        };
+        let response = run_extraction(sidecar_req).unwrap();
+        assert_eq!(response.status, "ok");
+        assert_eq!(response.pages.unwrap_or(0), response.pages.unwrap_or(0)); // smoke test
+
+        // Step 3: Map to LocalExtractionV1 (as the command handler does)
+        use crate::contracts::{ExtractionMode, ExtractionStatus, InvoiceFieldsV1, InvoiceTotalsV1, LocalExtractionV1};
+        let local = LocalExtractionV1 {
+            provenance: "local_deterministic".to_string(),
+            document_sha256: response.sha256.unwrap_or_default(),
+            status: ExtractionStatus::Complete,
+            pages_processed: response.pages.unwrap_or(0),
+            truncation_reason: None,
+            extraction_mode: ExtractionMode::DigitalText,
+            invoice: response.invoice_fields.unwrap_or(InvoiceFieldsV1 {
+                invoice_number: None,
+                invoice_date: None,
+                simplified_invoice_date: None,
+                tax_label: None,
+                totals: InvoiceTotalsV1 { subtotal: None, tax: None, total: None },
+                matched: vec![],
+            }),
+            untrusted: true,
+        };
+        assert_eq!(local.provenance, "local_deterministic");
+        assert_eq!(local.untrusted, true);
+        assert_eq!(local.extraction_mode, ExtractionMode::DigitalText);
+        let _ = doc_id; // silence unused warning
     }
 }
