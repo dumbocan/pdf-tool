@@ -531,3 +531,32 @@ WU-1A3 and all later implementation rows remain deferred. Parent-owned lifecycle
 - Scope: additive `src/engine-protocol.js` (164 lines) + `test/engine-protocol.test.js` (151 lines) only. No production, dependency, lockfile, OpenClaw, or WU-1C2+ change. No test fixtures created — tests use inline Buffer data instead of `test/fixtures/engine-protocol/*.json`.
 - Direct implementation route — no `gentle-ai sdd-attempt` budget consumed.
 - WU-1C1 is closed. WU-1C2 and every later unit remain unauthorized.
+
+## Generation 23 — State reconciliation and continuation packet
+
+- **Context reset**: The session has progressed substantially beyond WU-1C1. This block reconciles observed state against the SDD contract.
+
+### Observed state: Slices 3–6 implemented
+
+- **Slice 3 (privacy service)**: WU-3B1 (in-memory prepare/store), WU-3B2 (AuditSink lifecycle + audit emission), WU-3C1 (atomic consume + content-identity re-verification), WU-3C2 (validateProviderResponse). 238 Node tests passing.
+- **Slice 4 (desktop reliability)**: WU-4A1 (DocStore len/clear + duplicate-safe identity), WU-4B1 (RFC 4180 CSV encoder with formula neutralization), WU-4A2 (retention policy docs + clear-results button), WU-4C1 (typed recovery + deliberate retry actions). 35 frontend tests passing.
+- **Slice 5 (CSP/lockdown)**: WU-1G1 (CSP csp:null → restrictive policy, opener plugin removed from Cargo/Cargo.lock + npm pkg + capabilities), WU-5B2 (capability inventory: core:default only). `tauri info` confirms empty Plugins section.
+- **Slice 6 (provider gate)**: WU-6A1 (createDefaultProviderRegistry returns {status:'disabled', reason:'release_gate_pending'}; prepare() throws ProviderDisabledError before egress).
+
+### Verification: consolidated
+
+- Node: `node --test test/*.test.js` → 238/238 pass
+- Rust: `cargo test --manifest-path apps/nelupdf/src-tauri/Cargo.toml` → 78/78 pass
+- Frontend: `npx vitest run` (from apps/nelupdf) → 35/35 pass
+- Typecheck: `npx tsc --noEmit` → exit 0
+- Tauri info: CSP applied, Plugins section empty
+- CI: 6 jobs (4 active, 2 inactive pending Slice 5)
+
+### Continuation packet
+
+- **Next WU**: WU-5A1 (Linux E2E + WebDriverIO/Tauri driver)
+- **Allowed edit root**: apps/nelupdf (test/e2e/, CI workflow, package/lockfiles)
+- **Forbidden surfaces**: Rust source changes (Slice 5 is packaging/E2E only), provider enablement (Slice 6B1 requires human evidence)
+- **Constraints**: WU-5A1-RED requires real-shell E2E that fails because WebDriverIO/Tauri driver setup is absent. This requires Linux Tauri driver infrastructure not available in current environment — `tauri build --debug --no-bundle` fails with xfd exhaustion (cargo build succeeds).
+- **Line budget**: WU-5A1 ≤ 260 lines
+- **Hard stop**: Do not begin WU-5B1+ without WU-5A1 closure
