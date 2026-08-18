@@ -552,7 +552,7 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 - [x] `WU-5A2-RED` Add packaged-path/integrity/no-PATH/resource tests before build changes. <!-- sdd-owner: implementation -->
 - [x] `WU-5A2-GREEN` Declare the minimum pinned `externalBin`/resources using installed Tauri schema. <!-- sdd-owner: implementation -->
 - [x] `WU-5A2-TRIANGULATE` Build on the first matrix target and prove local extraction with the packaged engine. <!-- sdd-owner: implementation -->
-- [ ] `WU-5A2-REFACTOR` Run dependency/license/audit/E2E/visual/scope gates within 340 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-5A2-REFACTOR` Run dependency/license/audit/E2E/visual/scope gates within 340 lines. <!-- sdd-owner: implementation -->
 
 ### WU-5B1 — Package OCR resources and capability declaration
 
