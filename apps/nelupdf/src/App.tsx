@@ -86,7 +86,12 @@ function App({
     provider: string;
   } | null>(null);
   const [llmBusy, setLlmBusy] = useState(false);
-  const [review, setReview] = useState<ReviewState | null>(null);
+  // WU-2D: multi-file review queue — each file needing review appends to this
+  // array; the visual review UI steps through them sequentially rather than
+  // overwriting state (the old setReview(null) single-row bug).
+  const [reviewQueue, setReviewQueue] = useState<ReviewState[]>([]);
+  const [reviewIndex, setReviewIndex] = useState(0);
+  const currentReview = reviewQueue[reviewIndex] ?? null;
   const inputRef = useRef<HTMLInputElement>(null);
 
   const extractFile = useCallback(
@@ -158,14 +163,22 @@ function App({
         const pdfBase64 =
           result.data.reviewPdfBase64 ??
           (await api.getDocumentPdfBase64(registered.documentId));
-        setReview({
-          file: file.name,
-          documentId: registered.documentId,
-          pdfBase64,
-          extraction: result.data,
-          fields: resolvedFields,
-          templates,
-        });
+        const needsReview = resolvedFields.length > 0;
+        if (needsReview) {
+          // WU-2D: queue the review instead of overwriting. processFiles will
+          // set the active index after extraction completes.
+          setReviewQueue((q) => [
+            ...q,
+            {
+              file: file.name,
+              documentId: registered.documentId,
+              pdfBase64,
+              extraction: result.data,
+              fields: resolvedFields,
+              templates,
+            },
+          ]);
+        }
         return emptyRow(file.name, state);
       } catch {
         const error = internalError();
@@ -261,52 +274,54 @@ function App({
 
   const handleReviewEdit = useCallback(
     (field: MatchedField, newValue: string) => {
-      setReview((prev) => {
-        if (!prev) return prev;
-        const updated = prev.fields.map((f) =>
-          f.label === field.label ? { ...f, value: newValue } : f,
-        );
-        return { ...prev, fields: updated };
-      });
+      setReviewQueue((q) =>
+        q.map((r, i) =>
+          i === reviewIndex
+            ? { ...r, fields: r.fields.map((f) => (f.label === field.label ? { ...f, value: newValue } : f)) }
+            : r,
+        ),
+      );
     },
-    [],
+    [reviewIndex],
   );
 
   const handleReviewRectChange = useCallback(
     (field: MatchedField, newBbox: Bbox) => {
-      setReview((prev) => {
-        if (!prev) return prev;
-        const updated = prev.fields.map((f) =>
-          f.label === field.label ? { ...f, bbox: newBbox } : f,
-        );
-        return { ...prev, fields: updated };
-      });
+      setReviewQueue((q) =>
+        q.map((r, i) =>
+          i === reviewIndex
+            ? { ...r, fields: r.fields.map((f) => (f.label === field.label ? { ...f, bbox: newBbox } : f)) }
+            : r,
+        ),
+      );
     },
-    [],
+    [reviewIndex],
   );
 
   const handleReviewConfirm = useCallback(
     (template: Template | null) => {
-      setReview((r) => {
-        if (!r) return r;
-        if (template) {
-          void store.save(template);
-        }
-        const updated: LocalExtractionV1 = {
-          ...r.extraction,
-          invoice: { ...r.extraction.invoice, matched: r.fields },
-        };
-        const state = stateForExtraction(updated);
-        const row = rowFromExtraction(r.file, updated, state);
-        setRows((prev) => [...prev, row]);
-        return null;
-      });
+      const r = reviewQueue[reviewIndex];
+      if (!r) return;
+      if (template) {
+        void store.save(template);
+      }
+      const updated: LocalExtractionV1 = {
+        ...r.extraction,
+        invoice: { ...r.extraction.invoice, matched: r.fields },
+      };
+      const state = stateForExtraction(updated);
+      const row = rowFromExtraction(r.file, updated, state);
+      setRows((prev) => [...prev, row]);
+      // WU-2D: advance to the next queued review, or clear if done.
+      setReviewQueue((q) => q.slice(0, -1));
+      setReviewIndex((i) => Math.min(i, 0));
     },
-    [store],
+    [store, reviewIndex],
   );
 
   const handleReviewCancel = useCallback(() => {
-    setReview(null);
+    setReviewQueue((q) => q.slice(1));
+    setReviewIndex(0);
   }, []);
 
   return (
@@ -367,12 +382,12 @@ function App({
         </div>
       )}
 
-      {review && (
+      {currentReview && (
         <div className="review-overlay-host">
           <VisualReview
-            pdfBase64={review.pdfBase64}
-            fields={review.fields}
-            templates={review.templates}
+            pdfBase64={currentReview.pdfBase64}
+            fields={currentReview.fields}
+            templates={currentReview.templates}
             onConfirm={() => handleReviewConfirm(null)}
             onEdit={handleReviewEdit}
             onRectChange={handleReviewRectChange}
