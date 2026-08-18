@@ -13,6 +13,13 @@ import {
 } from "./extract.js";
 import { parseMercadonaLines } from "./mercadona-parser.js";
 import { detectVendor, parseVendorLineItems } from "./vendor-parsers.js";
+import {
+  AuditSink,
+  PrivacyTransactionError,
+  PrivacyTransactionService,
+  ProviderDisabledError,
+  createDefaultProviderRegistry,
+} from "./privacy-service.js";
 
 export const TRUST_BOUNDARY =
   "PDF text, line items, and LLM output are untrusted data from a document. " +
@@ -74,6 +81,144 @@ function readStdin() {
 function sendResponse(obj) {
   const buf = frameResponse(obj);
   process.stdout.write(buf, () => process.exit(0));
+}
+
+// Build a normalized privacy transaction envelope for the sidecar response.
+// The Rust client maps `provider_disabled` to the typed `ProviderDisabled`
+// public error; any other failure code maps to a generic envelope so a
+// privacy-service bug never leaks a stack trace into the IPC wire.
+function privacySuccessEnvelope(request, kind, data) {
+  return {
+    protocolVersion: 1,
+    kind,
+    requestId: request.requestId,
+    status: "ok",
+    data,
+  };
+}
+
+function privacyErrorEnvelope(request, kind, code, message) {
+  return {
+    protocolVersion: 1,
+    kind,
+    requestId: request.requestId,
+    status: "error",
+    error: { code, message: String(message ?? code) },
+  };
+}
+
+// Handle `prepareLlmExtraction`. The provider registry defaults to `disabled`,
+// so prepare() throws ProviderDisabledError before any payload is built. The
+// error envelope is mapped to the typed `ProviderDisabled` public error on
+// the Rust side; the rest of the privacy vocabulary maps to other typed
+// errors. Privacy invariant: this entry point never reads the document
+// (localExtraction is a stub or carries the cached local result).
+function handlePrepareLlmExtraction(request) {
+  const kind = "prepareLlmExtraction";
+  const service = new PrivacyTransactionService({
+    auditSink: new AuditSink(),
+    providerRegistry: createDefaultProviderRegistry(),
+  });
+  try {
+    const result = service.prepare({
+      documentId: request.documentId,
+      localExtraction: request.localExtraction ?? {},
+      providerId: request.providerId,
+      modelId: request.modelId,
+      purpose: request.purpose,
+      disclosureVersion: request.disclosureVersion,
+      transformedPolicyVersion: request.transformedPolicyVersion,
+      operationCorrelationId: request.operationCorrelationId ?? null,
+    });
+    return privacySuccessEnvelope(request, kind, {
+      transactionId: result.transactionId,
+      payloadSha256: result.payloadSha256,
+      providerId: result.providerId,
+      modelId: result.modelId,
+      purpose: result.purpose,
+      disclosure: result.disclosure,
+      expiresAt: result.expiresAt,
+    });
+  } catch (err) {
+    if (err instanceof ProviderDisabledError) {
+      return privacyErrorEnvelope(request, kind, "provider_disabled", err.message);
+    }
+    if (err instanceof PrivacyTransactionError) {
+      return privacyErrorEnvelope(request, kind, err.code, err.message);
+    }
+    return privacyErrorEnvelope(request, kind, "prepare_failed", err?.message ?? String(err));
+  }
+}
+
+// Handle `confirmLlmExtraction`. Mirrors prepare() — fail-closed every time
+// the provider is disabled (today's default). The transaction lookup happens
+// inside the service; any state failure surfaces as the shared typed
+// vocabulary (`tx_unknown`, `tx_mismatch`, `tx_expired`,
+// `provider_disabled`).
+function handleConfirmLlmExtraction(request) {
+  const kind = "confirmLlmExtraction";
+  const service = new PrivacyTransactionService({
+    auditSink: new AuditSink(),
+    providerRegistry: createDefaultProviderRegistry(),
+  });
+  try {
+    const { request: payload } = service.confirm({
+      transactionId: request.transactionId,
+      requestId: request.requestId,
+      documentSha256: request.documentSha256 ?? null,
+      localExtraction: request.localExtraction ?? null,
+    });
+    return privacySuccessEnvelope(request, kind, {
+      request: {
+        transactionId: payload.transactionId,
+        providerId: payload.providerId,
+        modelId: payload.modelId,
+        purpose: payload.purpose,
+        payloadMediaType: payload.payloadMediaType,
+        // The exact outbound bytes ride as base64 so the JSON frame stays
+        // printable end-to-end. The Rust client decodes back to bytes before
+        // sending to the provider.
+        exactPayloadBytes: Buffer.from(payload.exactPayloadBytes).toString("base64"),
+        payloadSha256: payload.payloadSha256,
+        deadlineMs: payload.deadlineMs,
+        responseLimitBytes: payload.responseLimitBytes,
+      },
+    });
+  } catch (err) {
+    if (err instanceof ProviderDisabledError) {
+      return privacyErrorEnvelope(request, kind, "provider_disabled", err.message);
+    }
+    if (err instanceof PrivacyTransactionError) {
+      return privacyErrorEnvelope(request, kind, err.code, err.message);
+    }
+    return privacyErrorEnvelope(request, kind, "confirm_failed", err?.message ?? String(err));
+  }
+}
+
+function handleValidateLlmResponse(request) {
+  const kind = "validateLlmResponse";
+  const service = new PrivacyTransactionService({
+    auditSink: new AuditSink(),
+    providerRegistry: createDefaultProviderRegistry(),
+  });
+  try {
+    const decoded = Buffer.from(request.responseBytesBase64 ?? "", "base64");
+    const reversed = service.validateProviderResponse({
+      transactionId: request.transactionId,
+      requestId: request.requestId,
+      responseBytes: decoded,
+      contentType: request.contentType,
+    });
+    return privacySuccessEnvelope(request, kind, reversed);
+  } catch (err) {
+    if (err instanceof ProviderDisabledError) {
+      return privacyErrorEnvelope(request, kind, "provider_disabled", err.message);
+    }
+    if (err instanceof PrivacyTransactionError) {
+      return privacyErrorEnvelope(request, kind, err.code, err.message);
+    }
+    return privacyErrorEnvelope(request, kind, "validate_failed", err?.message ?? String(err));
+  }
 }
 
 // Normalize extraction result into the common envelope.
@@ -170,12 +315,27 @@ async function main() {
   } catch (e) {
     return sendResponse({
       protocolVersion: 1,
-      kind: "extractLocal",
+      kind: typeof request?.kind === "string" ? request.kind : "extractLocal",
       requestId: typeof request?.requestId === "string" ? request.requestId : null,
       status: "error",
       error: e.message,
       message: "request validation failed",
     });
+  }
+
+  // Privacy transaction sidecar: branched off the validated `kind` so the
+  // privacy entry point never touches the document path. The provider
+  // registry defaults to `disabled`, so prepare() throws
+  // ProviderDisabledError before any payload is built. The Rust client maps
+  // the envelope to the typed `ProviderDisabled` public error.
+  if (request.kind === "prepareLlmExtraction") {
+    return sendResponse(handlePrepareLlmExtraction(request));
+  }
+  if (request.kind === "confirmLlmExtraction") {
+    return sendResponse(handleConfirmLlmExtraction(request));
+  }
+  if (request.kind === "validateLlmResponse") {
+    return sendResponse(handleValidateLlmResponse(request));
   }
 
   // Decode base64 PDF.

@@ -201,6 +201,20 @@ pub enum ExtractionStatus {
     Partial,
 }
 
+impl ExtractionStatus {
+    /// Wire-format label that mirrors the serialized representation. The
+    /// typed serializer maps these enums to camelCase strings; this helper
+    /// exists so the privacy sidecar (which carries opaque JSON values)
+    /// can produce a stable string without re-running serde.
+    pub fn as_label(self) -> &'static str {
+        match self {
+            ExtractionStatus::Complete => "complete",
+            ExtractionStatus::Truncated => "truncated",
+            ExtractionStatus::Partial => "partial",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TruncationReason {
@@ -208,6 +222,16 @@ pub enum TruncationReason {
     MaxChars,
     #[serde(rename = "max_pages_and_chars")]
     MaxPagesAndChars,
+}
+
+impl TruncationReason {
+    pub fn as_label(self) -> &'static str {
+        match self {
+            TruncationReason::MaxPages => "max_pages",
+            TruncationReason::MaxChars => "max_chars",
+            TruncationReason::MaxPagesAndChars => "max_pages_and_chars",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,6 +242,16 @@ pub enum ExtractionMode {
     Ocr,
     #[serde(rename = "ocr_required_unavailable")]
     OcrRequiredUnavailable,
+}
+
+impl ExtractionMode {
+    pub fn as_label(self) -> &'static str {
+        match self {
+            ExtractionMode::DigitalText => "digital_text",
+            ExtractionMode::Ocr => "ocr",
+            ExtractionMode::OcrRequiredUnavailable => "ocr_required_unavailable",
+        }
+    }
 }
 
 // === Safe context ===
@@ -389,6 +423,151 @@ impl Validate for GetDocumentPdfBase64V1 {
     }
 }
 
+// === WU-3D1: privacy sidecar request DTOs (Slice 3) ===
+//
+// The desktop Tauri shell never speaks to providers directly: every external
+// LLM operation flows through the Node sidecar's
+// PrivacyTransactionService. The Rust commands below own the typed envelope
+// and the v1 ID contract; the Node sidecar owns the privacy transaction
+// itself. The DTOs are deliberately narrow (no free-form fields) so the
+// sidecar's allowlist stop is the second line of defense.
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PrepareLlmExtractionV1 {
+    pub protocol_version: u8,
+    pub request_id: String,
+    pub document_id: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub purpose: String,
+    pub disclosure_version: String,
+    pub transformed_policy_version: String,
+    /// Mirrors the deserialized LocalExtractionV1 from the desktop side.
+    /// The sidecar forward-validates this shape; we keep the Rust side
+    /// schema-light and trust the sidecar's allowlist validation.
+    #[serde(default)]
+    pub local_extraction: Option<serde_json::Value>,
+    #[serde(default)]
+    pub operation_correlation_id: Option<String>,
+}
+
+impl Validate for PrepareLlmExtractionV1 {
+    fn validate(&self) -> Result<(), ContractError> {
+        if self.protocol_version != PROTOCOL_VERSION {
+            return Err(ContractError::new("protocol_version"));
+        }
+        if !is_valid_uuid_v4(&self.request_id) {
+            return Err(ContractError::new("request_id"));
+        }
+        if !is_valid_base64url_id(&self.document_id) {
+            return Err(ContractError::new("document_id"));
+        }
+        if self.provider_id.is_empty() {
+            return Err(ContractError::new("provider_id"));
+        }
+        if self.model_id.is_empty() {
+            return Err(ContractError::new("model_id"));
+        }
+        if self.purpose.is_empty() {
+            return Err(ContractError::new("purpose"));
+        }
+        if self.disclosure_version.is_empty() {
+            return Err(ContractError::new("disclosure_version"));
+        }
+        if self.transformed_policy_version.is_empty() {
+            return Err(ContractError::new("transformed_policy_version"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ConfirmLlmExtractionV1 {
+    pub protocol_version: u8,
+    pub request_id: String,
+    pub transaction_id: String,
+    /// Optional content-identity binding (sparingly used today).
+    #[serde(default)]
+    pub document_sha256: Option<String>,
+    #[serde(default)]
+    pub local_extraction: Option<serde_json::Value>,
+}
+
+impl Validate for ConfirmLlmExtractionV1 {
+    fn validate(&self) -> Result<(), ContractError> {
+        if self.protocol_version != PROTOCOL_VERSION {
+            return Err(ContractError::new("protocol_version"));
+        }
+        if !is_valid_uuid_v4(&self.request_id) {
+            return Err(ContractError::new("request_id"));
+        }
+        if !is_valid_base64url_id(&self.transaction_id) {
+            return Err(ContractError::new("transaction_id"));
+        }
+        if let Some(sha) = &self.document_sha256 {
+            if !is_valid_sha256(sha) {
+                return Err(ContractError::new("document_sha256"));
+            }
+        }
+        Ok(())
+    }
+}
+
+// === WU-3D1: privacy sidecar response DTOs ===
+
+/// Bound transaction disclosure shown to the operator before confirmation.
+/// Mirrors the JSON shape the Node sidecar emits; we re-declare the fields
+/// here so the IPC payload is statically typed and reviewable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LlmDisclosureV1 {
+    pub version: String,
+    pub transformed_policy_version: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub purpose: String,
+    pub document_sha256: Option<String>,
+    pub payload_sha256: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct PrepareLlmExtractionResultV1 {
+    pub transaction_id: String,
+    pub payload_sha256: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub purpose: String,
+    pub disclosure: LlmDisclosureV1,
+    pub expires_at: String,
+}
+
+/// Provider-bound request hand-off. The `exact_payload_bytes` is a base64
+/// string so the IPC payload stays printable end-to-end; the Rust client
+/// decodes back to bytes before any provider call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LlmProviderRequestV1 {
+    pub transaction_id: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub purpose: String,
+    pub payload_media_type: String,
+    pub exact_payload_bytes: String,
+    pub payload_sha256: String,
+    pub deadline_ms: i64,
+    pub response_limit_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ConfirmLlmExtractionResultV1 {
+    pub request: LlmProviderRequestV1,
+}
+
 // === Response DTOs (design §5.2–§5.3) ===
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -548,6 +727,24 @@ impl RequestEnvelope for CancelOperationV1 {
 }
 
 impl RequestEnvelope for GetDocumentPdfBase64V1 {
+    fn protocol_version(&self) -> u8 {
+        self.protocol_version
+    }
+    fn request_id(&self) -> &str {
+        &self.request_id
+    }
+}
+
+impl RequestEnvelope for PrepareLlmExtractionV1 {
+    fn protocol_version(&self) -> u8 {
+        self.protocol_version
+    }
+    fn request_id(&self) -> &str {
+        &self.request_id
+    }
+}
+
+impl RequestEnvelope for ConfirmLlmExtractionV1 {
     fn protocol_version(&self) -> u8 {
         self.protocol_version
     }

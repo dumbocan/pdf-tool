@@ -10,13 +10,19 @@
 // them over loopback fetch; REST errors are translated into MCP error content
 // without exposing stack traces.
 
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { HARD_MAX_PAGES, HARD_MAX_CHARS } from "./extract.js";
+import {
+  AuditSink,
+  PrivacyTransactionService,
+  ProviderDisabledError,
+  createDefaultProviderRegistry,
+} from "./privacy-service.js";
 
 const PDF_MAGIC = Buffer.from("%PDF-", "utf8");
 const MAX_PDF_BYTES = 12 * 1024 * 1024;
@@ -53,6 +59,36 @@ export const LLM_PROVIDER_DISABLED = Object.freeze({
     retry: "never",
   },
 });
+
+// Minimal localExtraction stub for the legacy raw-LLM tool. The MCP tool
+// never runs the local extractor, so we feed prepare() an empty stub that
+// still satisfies the documentSha256 / invoice allowlist contract. The
+// provider gate fires before the payload is built, so no document content
+// crosses the boundary.
+const EMPTY_LOCAL_EXTRACTION = Object.freeze({
+  provenance: "local_deterministic",
+  documentSha256: "",
+  status: "complete",
+  pagesProcessed: 0,
+  truncationReason: null,
+  extractionMode: "digital_text",
+  invoice: Object.freeze({
+    invoiceNumber: null,
+    invoiceDate: null,
+    simplifiedInvoiceDate: null,
+    taxLabel: null,
+    totals: Object.freeze({ subtotal: null, tax: null, total: null }),
+    matched: Object.freeze([]),
+  }),
+  untrusted: true,
+});
+
+// Synthetic document identity for the legacy raw-LLM tool. Same shape as
+// the privacy service's transactionId generator (22-char base64url, 128 bits
+// of entropy). Privacy invariant: never persisted, indexed, or echoed back.
+function generateSyntheticDocumentId() {
+  return randomBytes(16).toString("base64url");
+}
 
 class HttpBodyTooLargeError extends Error {
   constructor() {
@@ -168,6 +204,10 @@ export function createMcpFacade({
   llmExtractUrl = `http://127.0.0.1:${port}/extract-with-llm`,
   workspaceRoot = resolveWorkspaceRoot(),
   fetchImpl = globalThis.fetch,
+  privacyService = new PrivacyTransactionService({
+    auditSink: new AuditSink(),
+    providerRegistry: createDefaultProviderRegistry(),
+  }),
 } = {}) {
   const sessions = new Map();
 
@@ -278,10 +318,32 @@ export function createMcpFacade({
         }),
       },
       async () => {
-        // Fail-closed legacy raw-LLM route (WU-2D): Slice 3 requires every
-        // LLM call to flow through PrivacyTransactionService mediation, so
-        // this tool never reaches a provider. The typed envelope is emitted
-        // before any workspace resolution, file read, or upstream call.
+        // Fail-closed legacy raw-LLM route (WU-2D / WU-3D1): Slice 3
+        // requires every LLM call to flow through PrivacyTransactionService
+        // mediation, so this tool never reaches a provider. prepare() throws
+        // ProviderDisabledError before any payload is built or sent. The
+        // typed envelope is emitted before any workspace resolution, file
+        // read, or upstream call.
+        try {
+          privacyService.prepare({
+            documentId: generateSyntheticDocumentId(),
+            localExtraction: EMPTY_LOCAL_EXTRACTION,
+            providerId: "minimax",
+            modelId: "MiniMax-M3",
+            purpose: "extract_invoice",
+            disclosureVersion: "v1",
+            transformedPolicyVersion: "pseudonymize-v1",
+            operationCorrelationId: "mcp:extract_pdf_with_llm",
+          });
+        } catch (err) {
+          if (err instanceof ProviderDisabledError) {
+            return llmProviderDisabledResult();
+          }
+          // Privacy invariant: anything that is not the expected fail-closed
+          // path is an internal error. Surface it as the same envelope so the
+          // MCP client never sees a stack trace or provider payload.
+          return llmProviderDisabledResult();
+        }
         return llmProviderDisabledResult();
       },
     );

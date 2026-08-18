@@ -173,15 +173,41 @@ export function validateRequest(request) {
     throw err("invalid_request_shape");
   }
 
-  for (const key of Object.keys(request)) {
-    if (!ALLOWED_TOP.has(key)) throw err("unknown_field");
-  }
-
   // protocolVersion: must be integer 1
   if (request.protocolVersion !== 1) throw err("protocol_version");
 
-  // kind: must be exactly "extractLocal"
-  if (request.kind !== "extractLocal") throw err("kind_unsupported");
+  // Dispatch on `kind` to the per-kind validator. Every kind has a closed
+  // allowlist of top-level keys, validated separately so a leaked field on
+  // one kind is rejected before it reaches the next consumer.
+  switch (request.kind) {
+    case "extractLocal":
+      return validateExtractLocalRequest(request);
+    case "prepareLlmExtraction":
+      return validatePrepareLlmExtractionRequest(request);
+    case "confirmLlmExtraction":
+      return validateConfirmLlmExtractionRequest(request);
+    case "validateLlmResponse":
+      return validateValidateLlmResponseRequest(request);
+    default:
+      throw err("kind_unsupported");
+  }
+}
+
+function allowlistOnly(value, allowed, label) {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) throw err("unknown_field");
+  }
+}
+
+function validateExtractLocalRequest(request) {
+  const allowed = new Set([
+    "protocolVersion",
+    "kind",
+    "requestId",
+    "document",
+    "limits",
+  ]);
+  allowlistOnly(request, allowed, "extractLocal");
 
   // requestId: canonical UUID v4
   if (typeof request.requestId !== "string" || !UUID_V4_RE.test(request.requestId)) {
@@ -194,9 +220,7 @@ export function validateRequest(request) {
     throw err("missing_document");
   }
 
-  for (const key of Object.keys(doc)) {
-    if (!ALLOWED_DOC.has(key)) throw err("unknown_field");
-  }
+  allowlistOnly(doc, ALLOWED_DOC, "document");
 
   validateName(doc.name);
 
@@ -228,3 +252,176 @@ export function validateRequest(request) {
     validateLimits(request.limits);
   }
 }
+
+const ALLOWED_PREPARE_LLM = new Set([
+  "protocolVersion",
+  "kind",
+  "requestId",
+  "documentId",
+  "providerId",
+  "modelId",
+  "purpose",
+  "disclosureVersion",
+  "transformedPolicyVersion",
+  "localExtraction",
+  "operationCorrelationId",
+  "clientRequestId",
+]);
+
+const ALLOWED_CONFIRM_LLM = new Set([
+  "protocolVersion",
+  "kind",
+  "requestId",
+  "transactionId",
+  // Pass-through for content-identity binding (optional, validated when
+  // present). The privacy service hashes a fresh localExtraction to detect
+  // document mutation between prepare and confirm.
+  "documentSha256",
+  "localExtraction",
+]);
+
+const ALLOWED_VALIDATE_LLM = new Set([
+  "protocolVersion",
+  "kind",
+  "requestId",
+  "transactionId",
+  "responseBytesBase64",
+  "contentType",
+]);
+
+const ALLOWED_LOCAL_EXTRACTION = new Set([
+  "provenance",
+  "documentSha256",
+  "status",
+  "pagesProcessed",
+  "truncationReason",
+  "extractionMode",
+  "invoice",
+  "reviewPdfBase64",
+  "untrusted",
+]);
+
+const ALLOWED_INVOICE = new Set([
+  "invoiceNumber",
+  "invoiceDate",
+  "simplifiedInvoiceDate",
+  "taxLabel",
+  "totals",
+  "matched",
+]);
+
+const ALLOWED_TOTALS = new Set(["subtotal", "tax", "total"]);
+
+const ALLOWED_MATCHED = new Set(["label", "value", "bbox", "editable"]);
+
+const DOC_ID_LEN = 22;
+const BASE64URL_DOC_ID_RE = /^[A-Za-z0-9_-]{22}$/;
+
+function validateLocalExtraction(extraction) {
+  if (typeof extraction !== "object" || extraction === null || Array.isArray(extraction)) {
+    throw err("invalid_local_extraction");
+  }
+  allowlistOnly(extraction, ALLOWED_LOCAL_EXTRACTION, "localExtraction");
+  if (extraction.invoice !== undefined && extraction.invoice !== null) {
+    if (typeof extraction.invoice !== "object" || Array.isArray(extraction.invoice)) {
+      throw err("invalid_invoice");
+    }
+    allowlistOnly(extraction.invoice, ALLOWED_INVOICE, "invoice");
+    if (extraction.invoice.totals !== undefined && extraction.invoice.totals !== null) {
+      if (typeof extraction.invoice.totals !== "object" || Array.isArray(extraction.invoice.totals)) {
+        throw err("invalid_totals");
+      }
+      allowlistOnly(extraction.invoice.totals, ALLOWED_TOTALS, "totals");
+    }
+    if (extraction.invoice.matched !== undefined) {
+      if (!Array.isArray(extraction.invoice.matched)) throw err("invalid_matched");
+      for (const m of extraction.invoice.matched) {
+        if (typeof m !== "object" || m === null || Array.isArray(m)) {
+          throw err("invalid_matched_entry");
+        }
+        allowlistOnly(m, ALLOWED_MATCHED, "matched_entry");
+      }
+    }
+  }
+}
+
+function validatePrepareLlmExtractionRequest(request) {
+  allowlistOnly(request, ALLOWED_PREPARE_LLM, "prepareLlmExtraction");
+
+  if (typeof request.requestId !== "string" || !UUID_V4_RE.test(request.requestId)) {
+    throw err("request_id");
+  }
+  if (typeof request.documentId !== "string" || !BASE64URL_DOC_ID_RE.test(request.documentId)) {
+    throw err("invalid_document_id");
+  }
+  for (const field of [
+    "providerId",
+    "modelId",
+    "purpose",
+    "disclosureVersion",
+    "transformedPolicyVersion",
+  ]) {
+    if (typeof request[field] !== "string" || request[field].length === 0) {
+      throw err(`invalid_${field}`);
+    }
+  }
+  if (request.localExtraction != null) {
+    validateLocalExtraction(request.localExtraction);
+  }
+  if (
+    request.operationCorrelationId !== undefined &&
+    request.operationCorrelationId !== null &&
+    (typeof request.operationCorrelationId !== "string" ||
+      request.operationCorrelationId.length === 0)
+  ) {
+    throw err("invalid_operation_correlation_id");
+  }
+  if (
+    request.clientRequestId !== undefined &&
+    request.clientRequestId !== null &&
+    (typeof request.clientRequestId !== "string" ||
+      request.clientRequestId.length === 0)
+  ) {
+    throw err("invalid_client_request_id");
+  }
+}
+
+function validateConfirmLlmExtractionRequest(request) {
+  allowlistOnly(request, ALLOWED_CONFIRM_LLM, "confirmLlmExtraction");
+
+  if (typeof request.requestId !== "string" || !UUID_V4_RE.test(request.requestId)) {
+    throw err("request_id");
+  }
+  if (typeof request.transactionId !== "string" || !BASE64URL_DOC_ID_RE.test(request.transactionId)) {
+    throw err("invalid_transaction_id");
+  }
+  if (request.documentSha256 != null) {
+    if (typeof request.documentSha256 !== "string" || !SHA256_HEX_RE.test(request.documentSha256)) {
+      throw err("invalid_document_sha256");
+    }
+  }
+  if (request.localExtraction != null) {
+    validateLocalExtraction(request.localExtraction);
+  }
+}
+
+function validateValidateLlmResponseRequest(request) {
+  allowlistOnly(request, ALLOWED_VALIDATE_LLM, "validateLlmResponse");
+
+  if (typeof request.requestId !== "string" || !UUID_V4_RE.test(request.requestId)) {
+    throw err("request_id");
+  }
+  if (typeof request.transactionId !== "string" || !BASE64URL_DOC_ID_RE.test(request.transactionId)) {
+    throw err("invalid_transaction_id");
+  }
+  if (typeof request.responseBytesBase64 !== "string") {
+    throw err("invalid_response_bytes");
+  }
+  if (typeof request.contentType !== "string" || request.contentType.length === 0) {
+    throw err("invalid_content_type");
+  }
+}
+
+// DOC_ID_LEN is exported for downstream consumers that need to mirror the
+// 22-char base64url contract used by the privacy service.
+export { DOC_ID_LEN };

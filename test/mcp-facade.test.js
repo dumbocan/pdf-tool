@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createServer } from "../src/server.js";
+import { ProviderDisabledError } from "../src/privacy-service.js";
 
 const PROTOCOL_VERSION = "2025-03-26";
 const TOOL_NAMES = [
@@ -384,6 +385,57 @@ test("extract_pdf_with_llm returns the fail-closed provider_disabled envelope wi
     );
   } finally {
     spy.restore();
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+// WU-3D1: the LLM tool must wire through PrivacyTransactionService.prepare().
+// We inject a fake service that records the call (proving the wiring) and
+// throws the real ProviderDisabledError so the adapter's catch handles it.
+test("extract_pdf_with_llm wires through PrivacyTransactionService.prepare() and returns provider_disabled", async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "pdf-tool-mcp-"));
+  await writeFile(
+    path.join(workspace, "manual.pdf"),
+    "%PDF-1.4\nllm pdf bytes\n%%EOF\n",
+  );
+  let prepareCalls = 0;
+  let lastPrepareArgs = null;
+  const fakeService = {
+    prepare(args) {
+      prepareCalls += 1;
+      lastPrepareArgs = args;
+      throw new ProviderDisabledError(args.providerId);
+    },
+  };
+  try {
+    await withServer(
+      { workspaceRoot: workspace, privacyService: fakeService },
+      async (baseUrl) => {
+        const client = mcpClient(baseUrl);
+        await client.connect();
+        const result = await client.send("tools/call", {
+          name: "extract_pdf_with_llm",
+          arguments: {
+            path: path.join(workspace, "manual.pdf"),
+            prompt: "Extract the title",
+          },
+        });
+        assert.equal(result.isError, true);
+        assert.equal(prepareCalls, 1, "prepare() must be called once");
+        assert.equal(lastPrepareArgs.providerId, "minimax");
+        assert.equal(lastPrepareArgs.modelId, "MiniMax-M3");
+        assert.equal(lastPrepareArgs.purpose, "extract_invoice");
+        assert.equal(lastPrepareArgs.disclosureVersion, "v1");
+        assert.equal(lastPrepareArgs.transformedPolicyVersion, "pseudonymize-v1");
+        assert.equal(typeof lastPrepareArgs.documentId, "string");
+        assert.equal(lastPrepareArgs.documentId.length, 22);
+        const payload = JSON.parse(result.content[0].text);
+        assert.equal(payload.error.code, "provider_disabled");
+        assert.equal(payload.error.messageKey, "llm_provider_disabled");
+        assert.equal(payload.error.retry, "never");
+      },
+    );
+  } finally {
     await rm(workspace, { recursive: true, force: true });
   }
 });

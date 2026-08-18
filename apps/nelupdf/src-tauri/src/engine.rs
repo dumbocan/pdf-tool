@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::contracts::{ContractError, InvoiceFieldsV1};
+use crate::contracts::{ContractError, InvoiceFieldsV1, PROTOCOL_VERSION};
 
 fn deserialize_invoice_fields<'de, D>(deserializer: D) -> Result<Option<InvoiceFieldsV1>, D::Error>
 where
@@ -49,6 +49,136 @@ pub struct SidecarDocument {
 pub struct SidecarLimits {
     pub max_pages: Option<u32>,
     pub max_chars: Option<u32>,
+}
+
+// === WU-3D1: privacy sidecar request shapes (Slice 3) ===
+//
+// The privacy entry never touches the document — it only re-shapes the
+// cached local result that the Rust client already owns. The fields below
+// mirror the allowlist the Node sidecar enforces; unknown fields are
+// rejected before the request reaches the privacy service.
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarLocalExtraction {
+    pub provenance: String,
+    pub document_sha256: String,
+    pub status: String,
+    pub pages_processed: u32,
+    pub truncation_reason: Option<String>,
+    pub extraction_mode: String,
+    pub invoice: SidecarInvoice,
+    pub review_pdf_base64: Option<String>,
+    pub untrusted: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarInvoice {
+    pub invoice_number: Option<String>,
+    pub invoice_date: Option<String>,
+    pub simplified_invoice_date: Option<String>,
+    pub tax_label: Option<String>,
+    pub totals: SidecarTotals,
+    pub matched: Vec<SidecarMatchedField>,
+}
+
+#[derive(Debug, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarTotals {
+    pub subtotal: Option<String>,
+    pub tax: Option<String>,
+    pub total: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarMatchedField {
+    pub label: String,
+    pub value: Option<String>,
+    pub bbox: Option<serde_json::Value>,
+    pub editable: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarPrepareLlmRequest {
+    pub protocol_version: u8,
+    pub kind: String,
+    pub request_id: String,
+    pub document_id: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub purpose: String,
+    pub disclosure_version: String,
+    pub transformed_policy_version: String,
+    pub local_extraction: Option<SidecarLocalExtraction>,
+    pub operation_correlation_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarConfirmLlmRequest {
+    pub protocol_version: u8,
+    pub kind: String,
+    pub request_id: String,
+    pub transaction_id: String,
+    pub document_sha256: Option<String>,
+    pub local_extraction: Option<SidecarLocalExtraction>,
+}
+
+// === WU-3D1: generic privacy sidecar response ===
+//
+// The Node sidecar emits a uniform `{ protocolVersion, kind, requestId,
+// status, data?, error? }` envelope. `data` and `error` are opaque
+// `serde_json::Value` because per-kind shapes diverge (BoundTransaction vs
+// ProviderRequest vs reversed fields). The Tauri command translates the
+// status / error code into a typed `ApiResult::Error` before returning.
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarPrivacyResponse {
+    pub protocol_version: u8,
+    pub kind: String,
+    pub request_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub data: Option<serde_json::Value>,
+    #[serde(default)]
+    pub error: Option<SidecarPrivacyError>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidecarPrivacyError {
+    pub code: String,
+    #[serde(default)]
+    pub message: String,
+}
+
+impl SidecarPrivacyResponse {
+    pub fn into_api_result<T, F>(self, request_id: &str, map_data: F) -> Result<T, (String, String)>
+    where
+        F: FnOnce(serde_json::Value) -> Result<T, String>,
+    {
+        match self.status.as_str() {
+            "ok" => match self.data {
+                Some(value) => map_data(value).map_err(|msg| ("invalid_response".to_string(), msg)),
+                None => Err(("invalid_response".to_string(), "missing data".to_string())),
+            },
+            "error" => {
+                let err = self.error.unwrap_or(SidecarPrivacyError {
+                    code: "invalid_response".to_string(),
+                    message: "missing error envelope".to_string(),
+                });
+                Err((err.code, err.message))
+            }
+            other => Err((
+                "invalid_response".to_string(),
+                format!("unknown status: {other}; request_id={request_id}"),
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -162,6 +292,142 @@ fn parse_sidecar_output(stdout: Vec<u8>) -> Result<SidecarResponse, ContractErro
     }
     let value = parse_frame(&stdout)?;
     serde_json::from_value(value).map_err(|_| ContractError::new("invalid_response"))
+}
+
+// === WU-3D1: privacy sidecar runner (Slice 3) ===
+//
+// Spawns the same engine-stdio.js subprocess, but issues a different
+// sidecar kind. The privacy service is fail-closed today (every provider
+// returns `disabled`); the runner converts the sidecar envelope into a
+// typed `Result<SidecarPrivacyResponse, (code, message)>` so the Tauri
+// command can map the error code onto the closed `PublicErrorCode`
+// vocabulary.
+pub fn run_privacy_sidecar(
+    req: &(impl Serialize),
+    expected_kind: &str,
+) -> Result<SidecarPrivacyResponse, (String, String)> {
+    let engine = match find_engine_path() {
+        Some(p) => p,
+        None => return Err(("engine_unavailable".to_string(), "engine_unavailable".to_string())),
+    };
+    let frame = match encode_frame(req) {
+        Ok(f) => f,
+        Err(_) => return Err(("engine_lost".to_string(), "frame_encode_failed".to_string())),
+    };
+    let mut child = match Command::new("node")
+        .arg(engine)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return Err(("engine_unavailable".to_string(), "engine_unavailable".to_string())),
+    };
+    if child
+        .stdin
+        .take()
+        .ok_or_else(|| ("engine_lost".to_string(), "engine_lost".to_string()))
+        .and_then(|mut stdin| {
+            stdin.write_all(&frame).map_err(|_| ("engine_lost".to_string(), "engine_lost".to_string()))
+        })
+        .is_err()
+    {
+        return Err(("engine_lost".to_string(), "engine_lost".to_string()));
+    }
+    drop(child.stdin.take());
+    let mut stdout = Vec::new();
+    if child
+        .stdout
+        .take()
+        .ok_or_else(|| ("engine_lost".to_string(), "engine_lost".to_string()))
+        .and_then(|mut stdout_pipe| {
+            stdout_pipe
+                .read_to_end(&mut stdout)
+                .map_err(|_| ("engine_lost".to_string(), "engine_lost".to_string()))
+        })
+        .is_err()
+    {
+        return Err(("engine_lost".to_string(), "engine_lost".to_string()));
+    }
+    let status = match child.wait() {
+        Ok(s) => s,
+        Err(_) => return Err(("engine_lost".to_string(), "engine_lost".to_string())),
+    };
+    if !status.success() && stdout.is_empty() {
+        return Err(("engine_lost".to_string(), "engine_lost".to_string()));
+    }
+    if stdout.len() > crate::contracts::MAX_RESPONSE_BYTES + 4 {
+        return Err(("response_too_large".to_string(), "response_too_large".to_string()));
+    }
+    let value = match parse_frame(&stdout) {
+        Ok(v) => v,
+        Err(_) => return Err(("invalid_response".to_string(), "invalid_response".to_string())),
+    };
+    let response: SidecarPrivacyResponse = match serde_json::from_value(value) {
+        Ok(r) => r,
+        Err(_) => return Err(("invalid_response".to_string(), "invalid_response".to_string())),
+    };
+    if response.protocol_version != PROTOCOL_VERSION {
+        return Err(("protocol_mismatch".to_string(), "protocol_mismatch".to_string()));
+    }
+    if response.kind != expected_kind {
+        return Err((
+            "invalid_response".to_string(),
+            format!("expected kind={expected_kind} got {}", response.kind),
+        ));
+    }
+    Ok(response)
+}
+
+// Convert a `LocalExtractionV1` (the desktop's typed result) into the
+// sidecar-compatible flat shape. The Node sidecar uses the same field
+// names so the JSON round-trip is transparent; the only difference is the
+// bbox value type which we carry as-is.
+pub fn local_extraction_to_sidecar(
+    extraction: &crate::contracts::LocalExtractionV1,
+) -> SidecarLocalExtraction {
+    let matched = extraction
+        .invoice
+        .matched
+        .iter()
+        .map(|m| SidecarMatchedField {
+            label: m.label.clone(),
+            value: m.value.clone(),
+            bbox: m.bbox.as_ref().map(|b| {
+                serde_json::json!({
+                    "page": b.page,
+                    "x": b.x,
+                    "y": b.y,
+                    "width": b.width,
+                    "height": b.height,
+                })
+            }),
+            editable: m.editable,
+        })
+        .collect();
+    SidecarLocalExtraction {
+        provenance: extraction.provenance.clone(),
+        document_sha256: extraction.document_sha256.clone(),
+        status: extraction.status.as_label().to_string(),
+        pages_processed: extraction.pages_processed,
+        truncation_reason: extraction.truncation_reason.map(|r| r.as_label().to_string()),
+        extraction_mode: extraction.extraction_mode.as_label().to_string(),
+        invoice: SidecarInvoice {
+            invoice_number: extraction.invoice.invoice_number.clone(),
+            invoice_date: extraction.invoice.invoice_date.clone(),
+            simplified_invoice_date: extraction.invoice.simplified_invoice_date.clone(),
+            tax_label: extraction.invoice.tax_label.clone(),
+            totals: SidecarTotals {
+                subtotal: extraction.invoice.totals.subtotal.clone(),
+                tax: extraction.invoice.totals.tax.clone(),
+                total: extraction.invoice.totals.total.clone(),
+            },
+            matched,
+        },
+        review_pdf_base64: extraction.review_pdf_base64.clone(),
+        untrusted: extraction.untrusted,
+    }
 }
 
 #[cfg(test)]

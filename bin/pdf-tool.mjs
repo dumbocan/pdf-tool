@@ -10,6 +10,7 @@
 
 import { writeFile, appendFile, rename } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
@@ -17,9 +18,38 @@ import { spawnSync } from "node:child_process";
 import { scanFolder, listPdfFiles } from "../src/folder-scan.js";
 import { PROVIDERS } from "../src/providers.js";
 import { t } from "../src/i18n.js";
+import {
+  AuditSink,
+  PrivacyTransactionService,
+  ProviderDisabledError,
+  createDefaultProviderRegistry,
+} from "../src/privacy-service.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const VERSION = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version || "0.0.0";
+
+// Minimal localExtraction stub for the legacy raw-LLM CLI flag. The CLI
+// never runs the local extractor, so we feed prepare() an empty stub that
+// still satisfies the documentSha256 / invoice allowlist contract. The
+// provider gate fires before the payload is built, so no document content
+// crosses the boundary.
+const EMPTY_LOCAL_EXTRACTION = Object.freeze({
+  provenance: "local_deterministic",
+  documentSha256: "",
+  status: "complete",
+  pagesProcessed: 0,
+  truncationReason: null,
+  extractionMode: "digital_text",
+  invoice: Object.freeze({
+    invoiceNumber: null,
+    invoiceDate: null,
+    simplifiedInvoiceDate: null,
+    taxLabel: null,
+    totals: Object.freeze({ subtotal: null, tax: null, total: null }),
+    matched: Object.freeze([]),
+  }),
+  untrusted: true,
+});
 
 function csvCell(value) {
   let s = value == null ? "" : String(value);
@@ -359,10 +389,71 @@ async function main() {
       doRename = /^s/i.test(await prompt("¿Renombro los PDF con tu formato? (s/N): "));
     }
     if (rest.includes("--llm")) {
-      // Fail-closed legacy raw-LLM flag (WU-2D). Slice 3 requires every LLM
-      // call to flow through PrivacyTransactionService mediation, so the
-      // CLI never asks the LLM directly. 503 maps to a non-zero exit code
-      // because POSIX caps exit codes at 255.
+      // Fail-closed legacy raw-LLM flag (WU-2D / WU-3D1). Slice 3 requires
+      // every LLM call to flow through PrivacyTransactionService mediation,
+      // so the CLI never asks the LLM directly. The provider registry
+      // defaults to `disabled`, so prepare() throws
+      // ProviderDisabledError before any payload is built or sent. 503 maps
+      // to a non-zero exit code because POSIX caps exit codes at 255.
+      const privacyService = new PrivacyTransactionService({
+        auditSink: new AuditSink(),
+        providerRegistry: createDefaultProviderRegistry(),
+      });
+      // WU-3D1 wiring probe: when PDF_TOOL_LLM_WIRE_PROBE=1 we record the
+      // prepare() call and emit a structured JSON line to stderr so the
+      // integration test can verify the wiring without intercepting module
+      // imports in the spawned subprocess. Off by default; only the test
+      // suite sets this env var.
+      const wireProbe = process.env.PDF_TOOL_LLM_WIRE_PROBE === "1";
+      let prepareCalls = 0;
+      let lastPrepareArgs = null;
+      if (wireProbe) {
+        const originalPrepare = privacyService.prepare.bind(privacyService);
+        privacyService.prepare = (args) => {
+          prepareCalls += 1;
+          lastPrepareArgs = args;
+          try {
+            return originalPrepare(args);
+          } finally {
+            process.stderr.write(
+              "[llm-wire-probe]" +
+                JSON.stringify({
+                  calls: prepareCalls,
+                  args: lastPrepareArgs,
+                }) +
+                "\n",
+            );
+          }
+        };
+      }
+      try {
+        const envNowForLlm = readEnv();
+        privacyService.prepare({
+          // Synthetic 22-char base64url ID; the CLI never sees / persists a
+          // real document here because the local extractor never runs.
+          documentId: randomBytes(16).toString("base64url"),
+          localExtraction: EMPTY_LOCAL_EXTRACTION,
+          providerId: envNowForLlm.PROVIDER || "minimax",
+          modelId:
+            envNowForLlm.LLM_MODEL ??
+            envNowForLlm.MINIMAX_MODEL ??
+            "MiniMax-M3",
+          purpose: "extract_invoice",
+          disclosureVersion: "v1",
+          transformedPolicyVersion: "pseudonymize-v1",
+          operationCorrelationId: "cli:facturas--llm",
+        });
+      } catch (err) {
+        if (err instanceof ProviderDisabledError) {
+          console.error(t("llm_preview_disabled"));
+          process.exit(3);
+        }
+        // Privacy invariant: anything that is not the expected fail-closed
+        // path is an internal error. Surface the same exit code so scripts
+        // see a consistent failure but the user sees a typed message.
+        console.error(t("error", { msg: err?.message ?? err }));
+        process.exit(3);
+      }
       console.error(t("llm_preview_disabled"));
       process.exit(3);
     }
