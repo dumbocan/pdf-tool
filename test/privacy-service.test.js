@@ -1199,3 +1199,41 @@ describe("PrivacyTransactionService.validateProviderResponse — WU-3C2 contract
     );
   });
 });
+
+describe("Provider registry — Slice 6 fail-closed gate", () => {
+  it("createDefaultProviderRegistry returns disabled for every provider with release_gate_pending reason", () => {
+    const registry = createDefaultProviderRegistry();
+    for (const id of ["minimax", "openai", "anthropic", "ollama", "custom"]) {
+      const status = registry.get(id);
+      assert.equal(status.status, "disabled");
+      assert.equal(status.providerId, id);
+      assert.equal(status.reason, "release_gate_pending");
+    }
+  });
+
+  it("no provider is ever enabled by the default registry", () => {
+    const registry = createDefaultProviderRegistry();
+    // Even a known provider like "minimax" (which the old CLI used) stays disabled.
+    const minimax = registry.get("minimax");
+    assert.equal(minimax.status, "disabled");
+    assert.ok(minimax.reason?.includes("pending"), "reason must reference the gate");
+  });
+
+  it("prepare with a disabled provider throws ProviderDisabledError before egress", () => {
+    const sink = new AuditSink();
+    const service = new PrivacyTransactionService({
+      auditSink: sink,
+      providerRegistry: createDefaultProviderRegistry(),
+    });
+    REGISTERED_SERVICES.add(service);
+
+    // prepare() itself must reject the disabled provider — no transaction is
+    // created, no payload bytes are bound, no egress can occur. This is the
+    // Slice 3 / Slice 6 fail-closed gate.
+    assert.throws(
+      () => service.prepare(makePrepareArgs({ providerId: "minimax" })),
+      (err) => err instanceof ProviderDisabledError && err.code === "provider_disabled",
+    );
+    assert.equal(service.size, 0, "no transaction should be stored for a disabled provider");
+  });
+});
