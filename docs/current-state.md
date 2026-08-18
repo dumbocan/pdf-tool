@@ -1,5 +1,14 @@
 # Current State
 
+WU-3A2 (deterministic pseudonymizer seed) is on `wu-3a2`. `createPseudonymizer({ seed })`
+now accepts an optional numeric seed for reproducible tests — factor becomes
+`3 + (Math.abs(Math.floor(seed)) % 10)` (range 3..12). Unseeded callers keep the
+random factor, so `PrivacyTransactionService.prepare()` still produces a fresh
+per-transaction factor as designed. `factor` stays exposed on the returned
+object (no existing-test breakage). `test/pseudonymize.test.js` grew a 7th test
+that proves same-seed reproducibility and verifies the math for seeds `42`,
+`-42`, `7`, plus the unseeded range. Node suite now **218 tests** (was 217).
+
 WU-3A1 (fail-closed path-bearing CLI + MCP migration) is on `wu-3a1`. The
 path-bearing single-PDF route now returns `unsafe_path_contract_removed_v1`
 unconditionally on every surface — HTTP `/extract-path` (already WU-2B/2C),

@@ -45,9 +45,15 @@ const PII_PATTERNS = [
 
 const AMOUNT_PATTERN = /\b\d+(?:[.,]\d{3})*(?:[.,]\d{2})?\s*(?:€|EUR|USD|\$)(?=\s|$)/g;
 
-export function createPseudonymizer() {
-  // factor entero por sesión: preserva la aritmética en céntimos exacta
-  const factor = 3 + Math.floor(Math.random() * 10); // 3..12
+export function createPseudonymizer(options = {}) {
+  const { seed } = options;
+  // factor entero por sesión: preserva la aritmética en céntimos exacta.
+  // `seed` opcional: si se pasa, el factor es determinista (3..12) — pensado
+  // para tests reproducibles; en producción PrivacyTransactionService sigue
+  // creando un pseudonymizer SIN seed (factor aleatorio por transacción).
+  const factor = typeof seed === "number"
+    ? 3 + (Math.abs(Math.floor(seed)) % 10) // determinista: 3 + (seed % 10)
+    : 3 + Math.floor(Math.random() * 10);   // aleatorio: 3..12
   const piiMap = new Map(); // real -> ficticio (la "clave" que nunca sale)
   const reversePii = new Map(); // ficticio -> real
   const reverseAmounts = new Map(); // ficticio -> real (string literal)
