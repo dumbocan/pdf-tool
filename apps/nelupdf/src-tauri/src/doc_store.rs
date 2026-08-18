@@ -57,13 +57,28 @@ impl DocStore {
             .cloned()
     }
 
-    #[allow(dead_code)]
     pub fn remove(&self, document_id: &str) -> bool {
         self.docs
             .lock()
             .expect("document store mutex poisoned")
             .remove(document_id)
             .is_some()
+    }
+
+    pub fn len(&self) -> usize {
+        self.docs
+            .lock()
+            .expect("document store mutex poisoned")
+            .len()
+    }
+
+    pub fn clear(&self) -> usize {
+        let mut docs = self.docs
+            .lock()
+            .expect("document store mutex poisoned");
+        let count = docs.len();
+        docs.clear();
+        count
     }
 }
 
@@ -130,5 +145,38 @@ mod tests {
         let registered = store.store(request(data)).unwrap();
         let stored = store.get(&registered.document_id).unwrap();
         assert_eq!(stored.sha256, format!("{:x}", Sha256::digest(data)));
+    }
+
+    #[test]
+    fn doc_store_duplicate_basenames_get_distinct_ids() {
+        let store = DocStore::default();
+        let r1 = store.store(request(b"first pdf bytes")).unwrap();
+        let r2 = store.store(request(b"second pdf bytes")).unwrap();
+        assert_ne!(r1.document_id, r2.document_id);
+        assert_eq!(r1.display_name, r2.display_name);
+    }
+
+    #[test]
+    fn doc_store_len_reflects_insertions_and_removals() {
+        let store = DocStore::default();
+        assert_eq!(store.len(), 0);
+        let r1 = store.store(request(b"pdf one")).unwrap();
+        let r2 = store.store(request(b"pdf two")).unwrap();
+        assert_eq!(store.len(), 2);
+        assert!(store.remove(&r1.document_id));
+        assert_eq!(store.len(), 1);
+        assert!(store.get(&r1.document_id).is_none());
+        assert!(store.get(&r2.document_id).is_some());
+    }
+
+    #[test]
+    fn doc_store_clear_releases_all_documents() {
+        let store = DocStore::default();
+        store.store(request(b"pdf one")).unwrap();
+        store.store(request(b"pdf two")).unwrap();
+        assert_eq!(store.len(), 2);
+        let count = store.clear();
+        assert_eq!(count, 2);
+        assert_eq!(store.len(), 0);
     }
 }
