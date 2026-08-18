@@ -226,55 +226,55 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 
 **Depends on:** WU-1C3. **Candidates:** `apps/nelupdf/src-tauri/src/contracts.rs`, `apps/nelupdf/src-tauri/src/lib.rs`, `apps/nelupdf/src-tauri/Cargo.toml`, `Cargo.lock`. **Acceptance:** closed serde DTOs enforce protocol, UUID, name, base64, size, option, result, and safe-error bounds; URL/path/token/unknown fields reject; no command behavior yet. **Rollback:** remove additive contracts and dependency changes.
 
-- [ ] `WU-1D1-RED` Write serde/validator tests for every exact v1 bound and forbidden field, then record focused Cargo failures. <!-- sdd-owner: implementation -->
-- [ ] `WU-1D1-GREEN` Implement minimal closed DTOs and validators; run `cargo test --manifest-path apps/nelupdf/src-tauri/Cargo.toml contracts`. <!-- sdd-owner: implementation -->
-- [ ] `WU-1D1-TRIANGULATE` Add max/max+1 Unicode scalar/UTF-8, UUID version/case, enum, safe-context, and response-consistency cases. <!-- sdd-owner: implementation -->
-- [ ] `WU-1D1-REFACTOR` Deduplicate bound checks without weakening closed schemas; run Cargo/frontend/visual/scope and dependency gates within 360 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1D1-RED` Write serde/validator tests for every exact v1 bound and forbidden field, then record focused Cargo failures. <!-- sdd-owner: implementation -->
+- [x] `WU-1D1-GREEN` Implement minimal closed DTOs and validators; run `cargo test --manifest-path apps/nelupdf/src-tauri/Cargo.toml contracts`. <!-- sdd-owner: implementation -->
+- [x] `WU-1D1-TRIANGULATE` Add max/max+1 Unicode scalar/UTF-8, UUID version/case, enum, safe-context, and response-consistency cases. <!-- sdd-owner: implementation -->
+- [x] `WU-1D1-REFACTOR` Deduplicate bound checks without weakening closed schemas; run Cargo/frontend/visual/scope and dependency gates within 360 lines. <!-- sdd-owner: implementation -->
 
 ### WU-1D2 — Rust in-memory authorized document store
 
 **Depends on:** WU-1D1. **Candidates:** `apps/nelupdf/src-tauri/src/documents.rs`, `contracts.rs`, `lib.rs`, focused Rust fixtures. **Acceptance:** canonical base64/decoded equality, PDF validation, SHA-256, 128-bit opaque session IDs, get/revoke/clear/drop, no path authority, and no sensitive logging; deterministic IDs are test-only. **Rollback:** remove additive store module/wiring.
 
-- [ ] `WU-1D2-RED` Add register/forge/mismatch/overflow/invalid-PDF/revoke/clear/drop tests and record their absence failures. <!-- sdd-owner: implementation -->
-- [ ] `WU-1D2-GREEN` Implement bounded in-memory registration and opaque lookup; run focused `cargo test ... documents`. <!-- sdd-owner: implementation -->
-- [ ] `WU-1D2-TRIANGULATE` Test duplicate names, ID entropy shape, app-instance isolation, failure cleanup, and content-free diagnostics. <!-- sdd-owner: implementation -->
-- [ ] `WU-1D2-REFACTOR` Keep document authority behind a narrow API, run Cargo/visual/scope checks, and stay within 390 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1D2-RED` Add register/forge/mismatch/overflow/invalid-PDF/revoke/clear/drop tests and record their absence failures. <!-- sdd-owner: implementation -->
+- [x] `WU-1D2-GREEN` Implement bounded in-memory registration and opaque lookup; run focused `cargo test ... documents`. <!-- sdd-owner: implementation -->
+- [x] `WU-1D2-TRIANGULATE` Test duplicate names, ID entropy shape, app-instance isolation, failure cleanup, and content-free diagnostics. <!-- sdd-owner: implementation -->
+- [x] `WU-1D2-REFACTOR` Keep document authority behind a narrow API, run Cargo/visual/scope checks, and stay within 390 lines. <!-- sdd-owner: implementation -->
 
 ### WU-1D3 — Rust command/service contract with fake engine
 
 **Depends on:** WU-1D2. **Candidates:** `apps/nelupdf/src-tauri/src/commands.rs`, `services.rs`, `contracts.rs`, `documents.rs`, `lib.rs`. **Acceptance:** register/status/extract/cancel/clear v1 commands are explicit and testable through traits; fake adapter cannot enter production; unknown versions/responses fail typed; real process not yet wired. **Rollback:** restore `lib.rs` handler and remove additive command/service files.
 
-- [ ] `WU-1D3-RED` Add command envelope and fake-adapter tests that fail because versioned commands/services are absent. <!-- sdd-owner: implementation -->
-- [ ] `WU-1D3-GREEN` Implement minimal handlers/services and explicit `generate_handler!` registration using the fake only in tests. <!-- sdd-owner: implementation -->
-- [ ] `WU-1D3-TRIANGULATE` Add unauthorized ID, invalid response, safe error, status no-spawn/no-network, and clear behavior cases. <!-- sdd-owner: implementation -->
-- [ ] `WU-1D3-REFACTOR` Separate Tauri wrappers from pure services, run Cargo/Tauri check/visual/scope, and split before exceeding 400 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1D3-RED` Add command envelope and fake-adapter tests that fail because versioned commands/services are absent. <!-- sdd-owner: implementation -->
+- [x] `WU-1D3-GREEN` Implement minimal handlers/services and explicit `generate_handler!` registration using the fake only in tests. <!-- sdd-owner: implementation -->
+- [x] `WU-1D3-TRIANGULATE` Add unauthorized ID, invalid response, safe error, status no-spawn/no-network, and clear behavior cases. <!-- sdd-owner: implementation -->
+- [x] `WU-1D3-REFACTOR` Separate Tauri wrappers from pure services, run Cargo/Tauri check/visual/scope, and split before exceeding 400 lines. <!-- sdd-owner: implementation -->
 
 ### WU-1E1 — Rust private child spawn and framed process adapter
 
 **Depends on:** WU-1D3. **Candidates:** `apps/nelupdf/src-tauri/src/engine.rs`, `services.rs`, `lib.rs`, Cargo manifests, Rust integration fixtures. **Acceptance:** Rust owns the exact dev executable and pipes, sends one bounded frame, validates one bounded response, sanitizes environment/descriptors, and never uses loopback or duplicates Node extraction. **Rollback:** remove production adapter wiring and restore fake-only service boundary; never restore webview HTTP as fallback.
 
-- [ ] `WU-1E1-RED` Add fake-child and real-Node process tests for spawn, frame, request/hash binding, malformed response, extra stdout, and child exit; record failures. <!-- sdd-owner: implementation -->
-- [ ] `WU-1E1-GREEN` Implement the minimal `ProcessEngineAdapter` over the existing Node stdio executable and pass focused Cargo integration tests. <!-- sdd-owner: implementation -->
-- [ ] `WU-1E1-TRIANGULATE` Test minimal environment, no provider secrets, response cap, stderr separation, and direct-HTTP absence. <!-- sdd-owner: implementation -->
-- [ ] `WU-1E1-REFACTOR` Keep process transport behind `EngineAdapter`, run Node/Cargo/OpenClaw/visual/scope gates within 390 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1E1-RED` Add fake-child and real-Node process tests for spawn, frame, request/hash binding, malformed response, extra stdout, and child exit; record failures. <!-- sdd-owner: implementation -->
+- [x] `WU-1E1-GREEN` Implement the minimal `ProcessEngineAdapter` over the existing Node stdio executable and pass focused Cargo integration tests. <!-- sdd-owner: implementation -->
+- [x] `WU-1E1-TRIANGULATE` Test minimal environment, no provider secrets, response cap, stderr separation, and direct-HTTP absence. <!-- sdd-owner: implementation -->
+- [x] `WU-1E1-REFACTOR` Keep process transport behind `EngineAdapter`, run Node/Cargo/OpenClaw/visual/scope gates within 390 lines. <!-- sdd-owner: implementation -->
 
 ### WU-1E2 — Operation registry, readiness, cancellation, and terminal CAS
 
 **Depends on:** WU-1E1. **Candidates:** `apps/nelupdf/src-tauri/src/operations.rs`, `engine.rs`, `services.rs`, `contracts.rs`. **Acceptance:** one active operation/no queue, exact readiness vocabulary, caller UUID reservation, concurrent idempotent cancel, terminal precedence, 64-record/60-second content-free retention, and late-result suppression. **Rollback:** remove registry module and revert service integration to non-exposed adapter test state.
 
-- [ ] `WU-1E2-RED` Add deterministic-clock race tests for cancel-before/after success/timeout/exit, repeats, unknown IDs, capacity, and retention; record failures. <!-- sdd-owner: implementation -->
-- [ ] `WU-1E2-GREEN` Implement atomic reservation/state/terminal transitions and pass focused operation tests. <!-- sdd-owner: implementation -->
-- [ ] `WU-1E2-TRIANGULATE` Add status snapshots for every state and stale callback attempts after terminal commit. <!-- sdd-owner: implementation -->
-- [ ] `WU-1E2-REFACTOR` Isolate monotonic clock/test controls, run Cargo/Node/visual/scope checks, and split before 400 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1E2-RED` Add deterministic-clock race tests for cancel-before/after success/timeout/exit, repeats, unknown IDs, capacity, and retention; record failures. <!-- sdd-owner: implementation -->
+- [x] `WU-1E2-GREEN` Implement atomic reservation/state/terminal transitions and pass focused operation tests. <!-- sdd-owner: implementation -->
+- [x] `WU-1E2-TRIANGULATE` Add status snapshots for every state and stale callback attempts after terminal commit. <!-- sdd-owner: implementation -->
+- [x] `WU-1E2-REFACTOR` Isolate monotonic clock/test controls, run Cargo/Node/visual/scope checks, and split before 400 lines. <!-- sdd-owner: implementation -->
 
 ### WU-1E3 — Deadlines, termination, cleanup, and real boundary proof
 
 **Depends on:** WU-1E2. **Candidates:** `apps/nelupdf/src-tauri/src/engine.rs`, `operations.rs`, `tests/boundary_v1.rs`, `test/fixtures/*`. **Acceptance:** 5s readiness, 30s wall clock, accepted cancellation terminal within 3s, graceful 1s/force 2s, total cleanup 5s, 65,536-byte stderr tail, restart admission only after cleanup, real Node offline success. **Rollback:** revert deadline/cleanup integration to the prior bounded non-delivered adapter; do not expose extraction if cleanup is unsafe.
 
-- [ ] `WU-1E3-RED` Add short injected-clock timeout/kill/reap/stderr/capacity and real-child offline tests; record failures. <!-- sdd-owner: implementation -->
-- [ ] `WU-1E3-GREEN` Implement bounded termination/cleanup and make focused Rust boundary tests pass. <!-- sdd-owner: implementation -->
-- [ ] `WU-1E3-TRIANGULATE` Exercise crash, hang, malformed response, cancellation race, cleanup failure/clear, and successful network-denied extraction. <!-- sdd-owner: implementation -->
-- [ ] `WU-1E3-REFACTOR` Consolidate terminal cleanup without changing precedence, run all internal/OpenClaw/visual/scope checks within 390 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-1E3-RED` Add short injected-clock timeout/kill/reap/stderr/capacity and real-child offline tests; record failures. <!-- sdd-owner: implementation -->
+- [x] `WU-1E3-GREEN` Implement bounded termination/cleanup and make focused Rust boundary tests pass. <!-- sdd-owner: implementation -->
+- [x] `WU-1E3-TRIANGULATE` Exercise crash, hang, malformed response, cancellation race, cleanup failure/clear, and successful network-denied extraction. <!-- sdd-owner: implementation -->
+- [x] `WU-1E3-REFACTOR` Consolidate terminal cleanup without changing precedence, run all internal/OpenClaw/visual/scope checks within 390 lines. <!-- sdd-owner: implementation -->
 
 ### WU-1F1 — TypeScript desktop adapter, decoder, and pure reducer
 
@@ -464,10 +464,10 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 
 **Depends on:** WU-3C2. **Candidates:** `bin/pdf-tool.mjs`, `src/server.js`, `src/mcp-facade.js`, adapter tests/docs. **Acceptance:** prepare/confirm semantics identical; legacy three MCP tool names/schemas remain or receive explicit versioned migration; OpenClaw local base64 workflow remains; no direct payload construction. **Rollback:** disable external operations while preserving deterministic interfaces.
 
-- [ ] `WU-3D1-RED` Add cross-interface parity and no-bypass/captured-egress tests. <!-- sdd-owner: implementation -->
-- [ ] `WU-3D1-GREEN` Wire all non-desktop adapters to the same transaction service. <!-- sdd-owner: implementation -->
-- [ ] `WU-3D1-TRIANGULATE` Mutate every bound field per interface and run live OpenClaw checks. <!-- sdd-owner: implementation -->
-- [ ] `WU-3D1-REFACTOR` Run full privacy/OpenClaw/visual/scope gates within 360 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-3D1-RED` Add cross-interface parity and no-bypass/captured-egress tests. <!-- sdd-owner: implementation -->
+- [x] `WU-3D1-GREEN` Wire all non-desktop adapters to the same transaction service. <!-- sdd-owner: implementation -->
+- [x] `WU-3D1-TRIANGULATE` Mutate every bound field per interface and run live OpenClaw checks. <!-- sdd-owner: implementation -->
+- [x] `WU-3D1-REFACTOR` Run full privacy/OpenClaw/visual/scope gates within 360 lines. <!-- sdd-owner: implementation -->
 
 ### WU-3D2 — Desktop disclosure/confirm adapter and accessible UI
 
