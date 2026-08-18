@@ -507,6 +507,9 @@ export class PrivacyTransactionService {
         "invalid_request",
       );
     }
+    // content-identity: extract documentSha256 from localExtraction
+    const documentSha256 =
+      localExtraction?.documentSha256 ?? null;
     if (typeof providerId !== "string" || providerId.length === 0) {
       throw new PrivacyTransactionError("providerId is required", "invalid_request");
     }
@@ -579,6 +582,7 @@ export class PrivacyTransactionService {
       transformedPolicyVersion,
       payloadBytes: exactPayloadBytes,
       payloadSha256,
+      documentSha256,
       pseudonymizer,
       expiresAtMs,
       consumed: false,
@@ -613,6 +617,7 @@ export class PrivacyTransactionService {
         providerId,
         modelId,
         purpose,
+        documentSha256,
         payloadSha256,
         expiresAt,
       },
@@ -628,6 +633,8 @@ export class PrivacyTransactionService {
     providerId,
     modelId,
     purpose,
+    documentSha256,
+    localExtraction,
   } = {}) {
     if (typeof transactionId !== "string" || transactionId.length === 0) {
       throw new PrivacyTransactionError(
@@ -685,6 +692,24 @@ export class PrivacyTransactionService {
       );
     }
 
+    // Integrity check (spec §74): verify the stored payload bytes still hash
+    // to the stored sha256. If the in-memory transaction was tampered with
+    // after prepare, reject before any provider action.
+    if (sha256Hex(tx.payloadBytes) !== tx.payloadSha256) {
+      this._transactions.delete(transactionId);
+      this._auditSink.emit({
+        kind: AuditEvent.TX_MISMATCH,
+        operationCorrelationId: requestId,
+        transactionId,
+        outcome: "mismatch",
+        timestamp: now,
+      });
+      throw new PrivacyTransactionError(
+        `transaction ${transactionId} payload integrity mismatch`,
+        "tx_mismatch",
+      );
+    }
+
     // Mismatch: caller asked to confirm with values that differ from the
     // bound transaction. The transaction is dropped so a second, correct
     // confirm cannot silently reuse it.
@@ -705,6 +730,64 @@ export class PrivacyTransactionService {
         `transaction ${transactionId} mismatch`,
         "tx_mismatch",
       );
+     }
+
+    // Content-identity binding (spec §74): the document SHA-256 and any
+    // local-extraction fields must match what was bound at prepare time.
+    // The caller may pass either the raw hash or a fresh local extraction;
+    // in the latter case we recompute the payload bytes and compare hashes.
+    // Any mutation — even a single changed invoice field — causes tx_mismatch
+    // and the transaction is dropped so it cannot be silently reused.
+    if (documentSha256 != null) {
+      if (typeof documentSha256 !== "string" || documentSha256.length === 0) {
+        throw new PrivacyTransactionError(
+          "documentSha256 must be a non-empty string when provided",
+          "invalid_request",
+        );
+      }
+      if (documentSha256 !== tx.documentSha256) {
+        this._transactions.delete(transactionId);
+        this._auditSink.emit({
+          kind: AuditEvent.TX_MISMATCH,
+          operationCorrelationId: requestId,
+          transactionId,
+          outcome: "mismatch",
+          timestamp: now,
+        });
+        throw new PrivacyTransactionError(
+          `transaction ${transactionId} document identity mismatch`,
+          "tx_mismatch",
+        );
+      }
+    }
+    if (localExtraction != null) {
+      const recomputed = minimizePayload({
+        documentId: tx.documentId,
+        purpose: tx.purpose,
+        localExtraction,
+        pseudonymizer: tx.pseudonymizer,
+      });
+      const recomputedBytes = Buffer.from(
+        canonicalize(scrubPayloadArtifacts(recomputed)),
+        "utf8",
+      );
+      if (
+        sha256Hex(recomputedBytes) !== tx.payloadSha256 ||
+        recomputedBytes.length !== tx.payloadBytes.length
+      ) {
+        this._transactions.delete(transactionId);
+        this._auditSink.emit({
+          kind: AuditEvent.TX_MISMATCH,
+          operationCorrelationId: requestId,
+          transactionId,
+          outcome: "mismatch",
+          timestamp: now,
+        });
+        throw new PrivacyTransactionError(
+          `transaction ${transactionId} content identity mismatch`,
+          "tx_mismatch",
+        );
+      }
     }
 
     // Atomic consume — single-threaded JS, no `await` between the check

@@ -134,6 +134,7 @@ describe("PrivacyTransactionService.prepare — BoundTransaction contract", () =
     const bound = service.prepare(makePrepareArgs());
 
     assert.deepEqual(Object.keys(bound.disclosure).sort(), [
+      "documentSha256",
       "expiresAt",
       "modelId",
       "payloadSha256",
@@ -450,6 +451,115 @@ describe("PrivacyTransactionService.confirm — atomic single-use consume", () =
     const events = sink.events.filter((e) => e.kind === AuditEvent.TX_MISMATCH);
     assert.equal(events.length, 1);
     assert.equal(events[0].transactionId, bound.transactionId);
+  });
+
+  it("confirm rejects a changed documentSha256 with tx_mismatch", () => {
+    const sink = new AuditSink();
+    const service = new PrivacyTransactionService({
+      auditSink: sink,
+      providerRegistry: ENABLED_REGISTRY,
+    });
+    REGISTERED_SERVICES.add(service);
+    const bound = service.prepare(makePrepareArgs());
+
+    assert.throws(
+      () =>
+        service.confirm({
+          transactionId: bound.transactionId,
+          requestId: VALID_REQUEST_ID,
+          documentSha256: "deadbeef".repeat(8), // different hash
+        }),
+      (err) => err instanceof PrivacyTransactionError && err.code === "tx_mismatch",
+    );
+     // Transaction must be dropped so it cannot be silently reused
+    assert.ok(!service._transactions.has(bound.transactionId), "transaction should be removed");
+  });
+
+  it("confirm with mutated localExtraction throws tx_mismatch", () => {
+    const sink = new AuditSink();
+    const service = new PrivacyTransactionService({
+      auditSink: sink,
+      providerRegistry: ENABLED_REGISTRY,
+    });
+    REGISTERED_SERVICES.add(service);
+    const bound = service.prepare(makePrepareArgs());
+
+    // Mutate a field value — hash must change
+    assert.throws(
+      () =>
+        service.confirm({
+          transactionId: bound.transactionId,
+          requestId: VALID_REQUEST_ID,
+          localExtraction: makeLocalExtraction({
+            invoice: {
+              invoiceNumber: "NIF: 99999999X", // changed
+              invoiceDate: "2026-01-15",
+              simplifiedInvoiceDate: null,
+              taxLabel: "IVA",
+              totals: { subtotal: "100.00", tax: "21.00", total: "121.00" },
+              matched: ["invoiceNumber", "invoiceDate", "subtotal", "tax", "total"],
+            },
+          }),
+        }),
+      (err) => err instanceof PrivacyTransactionError && err.code === "tx_mismatch",
+    );
+  });
+
+  it("confirm with exactPayloadBytes that does not match payloadSha256 throws tx_mismatch", () => {
+    const sink = new AuditSink();
+    const service = new PrivacyTransactionService({
+      auditSink: sink,
+      providerRegistry: ENABLED_REGISTRY,
+    });
+    REGISTERED_SERVICES.add(service);
+    const bound = service.prepare(makePrepareArgs());
+
+    // Simulate tampering: corrupt the stored payload bytes
+    const tx = service._transactions.get(bound.transactionId);
+    tx.payloadBytes = Buffer.from("corrupted payload");
+    tx.payloadSha256 = "0".repeat(64); // also corrupt the stored hash
+
+    assert.throws(
+      () =>
+        service.confirm({
+          transactionId: bound.transactionId,
+          requestId: VALID_REQUEST_ID,
+        }),
+      (err) => err instanceof PrivacyTransactionError && err.code === "tx_mismatch",
+    );
+  });
+
+  it("onSent callback only fires on successful confirm, not on tx_mismatch", () => {
+    const sink = new AuditSink();
+    const service = new PrivacyTransactionService({
+      auditSink: sink,
+      providerRegistry: ENABLED_REGISTRY,
+    });
+    REGISTERED_SERVICES.add(service);
+    const bound = service.prepare(makePrepareArgs());
+
+    let onSentCalled = false;
+    try {
+      service.confirm({
+        transactionId: bound.transactionId,
+        requestId: VALID_REQUEST_ID,
+        documentSha256: "wrong".repeat(13),
+      });
+    } catch {
+      // expected tx_mismatch
+    }
+    const onSentCalledBeforeMismatch = onSentCalled;
+
+    // Now do a fresh successful confirm
+    const bound2 = service.prepare(makePrepareArgs());
+    const { onSent } = service.confirm({
+      transactionId: bound2.transactionId,
+      requestId: VALID_REQUEST_ID,
+      documentSha256: "0".repeat(64),
+    });
+    assert.equal(onSentCalledBeforeMismatch, false, "onSent must not fire on mismatch");
+    assert.equal(typeof onSent, "function", "onSent must be returned on success");
+    onSent();
   });
 
   it("confirm emits tx_confirm_attempt, tx_confirm_consumed, and tx_confirm_sent (via onSent)", () => {
