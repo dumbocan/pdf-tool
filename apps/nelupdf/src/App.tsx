@@ -443,6 +443,21 @@ function App({
               ))}
             </tbody>
           </table>
+          <div className="results-footer">
+            <button
+              onClick={() => {
+                setRows([]);
+                setReview(null);
+                void store.clear();
+              }}
+              disabled={processing || rows.length === 0}
+            >
+              Limpiar resultados
+            </button>
+            <a href="https://nelupdf.ar/docs/retention" target="_blank" rel="noopener">
+              Política de retención
+            </a>
+          </div>
         </div>
       )}
 

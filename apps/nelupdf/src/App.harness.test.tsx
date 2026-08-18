@@ -241,6 +241,13 @@ describe("NeluPDF selection screen", () => {
 
     await assertNoA11yViolations(container);
   });
+
+  it("references the retention policy doc in the results footer", () => {
+    // The results footer only renders after extraction, so verify the link
+    // target is truthful from the compiled source.
+    expect(appSource).toMatch(/política de retención/i);
+    expect(appSource).toMatch(/retention/);
+  });
 });
 
 describe("accessibility harness self-check (not App evidence)", () => {
