@@ -1,5 +1,13 @@
 # Current State
 
+WU-2D (fail-closed legacy raw-LLM route migration) is on `wu-2d`. The three
+raw-LLM egress points — HTTP `/extract-with-llm`, CLI `--llm`, and MCP
+`extract_pdf_with_llm` — now return `provider_disabled` unconditionally
+(even with `llmApiKey` configured). The `callLlm` helper stays in
+`server.js` as dead code; Slice 6 / PrivacyTransactionService own real
+LLM access. The shared envelope is exported as `LLM_PROVIDER_DISABLED`
+from `src/mcp-facade.js` and reused by the HTTP handler.
+
 WU-2C (positional bbox extraction) landed on `wu-2c`. The Node sidecar now
 surfaces page-relative percentages for every matched invoice field from
 pdfjs-dist text items, so the WU-2B VisualReview SVG overlay has real

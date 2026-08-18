@@ -340,7 +340,7 @@ test("extract_pdf_from_path returns the versioned migration result without files
   }
 });
 
-test("extract_pdf_with_llm returns the versioned migration result without filesystem access", async () => {
+test("extract_pdf_with_llm returns the fail-closed provider_disabled envelope without ever calling the provider", async () => {
   const workspace = await mkdtemp(path.join(os.tmpdir(), "pdf-tool-mcp-"));
   const spy = spyFs();
   try {
@@ -348,11 +348,17 @@ test("extract_pdf_with_llm returns the versioned migration result without filesy
       path.join(workspace, "manual.pdf"),
       "%PDF-1.4\nllm pdf bytes\n%%EOF\n",
     );
+    let providerCalls = 0;
+    const fetchImpl = async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+    };
     await withServer(
       {
         workspaceRoot: workspace,
         llmApiKey: "test-key",
         extract: EXTRACT_STUB,
+        fetchImpl,
       },
       async (baseUrl) => {
         const client = mcpClient(baseUrl);
@@ -366,7 +372,12 @@ test("extract_pdf_with_llm returns the versioned migration result without filesy
         });
         assert.equal(result.isError, true);
         const payload = JSON.parse(result.content[0].text);
-        assert.equal(payload.error, "unsafe_path_contract_removed_v1");
+        assert.equal(payload.ok, false);
+        assert.equal(payload.protocolVersion, 1);
+        assert.equal(payload.error.code, "provider_disabled");
+        assert.equal(payload.error.messageKey, "llm_provider_disabled");
+        assert.equal(payload.error.retry, "never");
+        assert.equal(providerCalls, 0);
         assert.equal(spy.calls.readFile, 0);
         assert.equal(spy.calls.realpath, 0);
       },

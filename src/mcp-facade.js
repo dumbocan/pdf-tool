@@ -39,6 +39,21 @@ export const UNSAFE_PATH_MIGRATION = Object.freeze({
     "restore workspace-bounded path access in a future release.",
 });
 
+// Fail-closed envelope for the raw-LLM egress points (HTTP /extract-with-llm,
+// CLI --llm, and MCP extract_pdf_with_llm). Slice 3 requires every LLM call
+// to flow through PrivacyTransactionService mediation, so these routes return
+// provider_disabled unconditionally — even when llmApiKey is configured.
+export const LLM_PROVIDER_DISABLED = Object.freeze({
+  ok: false,
+  protocolVersion: 1,
+  requestId: "server",
+  error: {
+    code: "provider_disabled",
+    messageKey: "llm_provider_disabled",
+    retry: "never",
+  },
+});
+
 class HttpBodyTooLargeError extends Error {
   constructor() {
     super("HTTP request body too large");
@@ -132,6 +147,16 @@ function failureEnvelope(tool, error, extra = {}) {
 function unsafePathMigrationResult() {
   return {
     content: [{ type: "text", text: JSON.stringify(UNSAFE_PATH_MIGRATION) }],
+    isError: true,
+  };
+}
+
+// Shared MCP result shape for the raw-LLM egress point. Emits the
+// fail-closed provider_disabled envelope without touching any workspace or
+// provider; the Slice 3 PrivacyTransactionService contract owns LLM access.
+function llmProviderDisabledResult() {
+  return {
+    content: [{ type: "text", text: JSON.stringify(LLM_PROVIDER_DISABLED) }],
     isError: true,
   };
 }
@@ -253,9 +278,11 @@ export function createMcpFacade({
         }),
       },
       async () => {
-        // Removed arbitrary path authority (versioned migration): return the
-        // typed result before any workspace resolution or filesystem access.
-        return unsafePathMigrationResult();
+        // Fail-closed legacy raw-LLM route (WU-2D): Slice 3 requires every
+        // LLM call to flow through PrivacyTransactionService mediation, so
+        // this tool never reaches a provider. The typed envelope is emitted
+        // before any workspace resolution, file read, or upstream call.
+        return llmProviderDisabledResult();
       },
     );
 

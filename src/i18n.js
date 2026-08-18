@@ -61,6 +61,7 @@ const STRINGS = {
     help_help: "  pdf-tool ayuda\n      Muestra esta ayuda.\n",
     help_out: "  pdf-tool facturas <carpeta> --out salida.csv\n      Guarda el resultado en otro archivo.\n",
     result_saved: "📄 Resultado guardado en: {path}",
+    llm_preview_disabled: "LLM preview is disabled. Use the desktop PrivacyTransactionService flow instead.",
     error: "Error: {msg}",
   },
   en: {
@@ -114,6 +115,7 @@ const STRINGS = {
     help_help: "  pdf-tool ayuda\n      Shows this help.\n",
     help_out: "  pdf-tool facturas <folder> --out output.csv\n      Saves the result to another file.\n",
     result_saved: "📄 Result saved to: {path}",
+    llm_preview_disabled: "LLM preview is disabled. Use the desktop PrivacyTransactionService flow instead.",
     error: "Error: {msg}",
   },
 };

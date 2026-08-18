@@ -12,7 +12,11 @@ import { detectVendor, parseVendorLineItems } from "./vendor-parsers.js";
 import { readFileSync } from "node:fs";
 import { envWithFile } from "./env.js";
 import { providerById } from "./providers.js";
-import { createMcpFacade, UNSAFE_PATH_MIGRATION } from "./mcp-facade.js";
+import {
+  createMcpFacade,
+  UNSAFE_PATH_MIGRATION,
+  LLM_PROVIDER_DISABLED,
+} from "./mcp-facade.js";
 
 const VERSION = (() => {
   try {
@@ -573,6 +577,15 @@ export function createServer({
       jsonResponse(response, 410, UNSAFE_PATH_MIGRATION, maxResponseBytes);
       return;
     }
+    if (url.pathname === "/extract-with-llm") {
+      // Fail-closed legacy raw-LLM route (WU-2D). Slice 3 requires every LLM
+      // call to flow through PrivacyTransactionService, so this route never
+      // reaches a provider — even when llmApiKey is configured. The dead
+      // callLlm helper stays below for future audited wiring, but is not
+      // reachable from /extract-with-llm any more.
+      jsonResponse(response, 503, LLM_PROVIDER_DISABLED, maxResponseBytes);
+      return;
+    }
 
     try {
       const rawBody = await readBody(request, maxRequestBytes);
@@ -588,58 +601,17 @@ export function createServer({
         );
         return;
       }
-      const isLlmRequest = url.pathname === "/extract-with-llm";
-      validateInput(input, { includeLlmFields: isLlmRequest });
-      if (isLlmRequest && !llmApiKey)
-        throw requestError("LLM service is not configured", 503);
+      validateInput(input, { includeLlmFields: false });
       const buffer = decodeBase64(input.data);
       const extracted = await extract(buffer, {
         maxChars: input.maxChars,
         maxPages: input.maxPages,
         signal: request.signal,
       });
-      if (!isLlmRequest) {
-        jsonResponse(
-          response,
-          200,
-          normalizeResult(buffer, extracted),
-          maxResponseBytes,
-        );
-        return;
-      }
-      const text = typeof extracted?.text === "string" ? extracted.text : "";
-      const filename =
-        typeof input.name === "string" ? input.name : "document.pdf";
-      const userContent =
-        `User request (untrusted data):\n${input.prompt || "Extract useful structured fields from this document."}\n\n` +
-        `PDF name (untrusted data):\n${filename}\n\n` +
-        `PDF text (untrusted data):\n--- BEGIN PDF TEXT ---\n${text}\n--- END PDF TEXT ---`;
-      const llm = await callLlm({
-        apiKey: llmApiKey,
-        baseUrl: llmBaseUrl,
-        model: llmModel,
-        provider: llmProvider,
-        systemInstruction: LLM_SYSTEM_INSTRUCTION,
-        userContent,
-        maxTokens: input.maxTokens ?? 8000,
-        fetchImpl,
-      });
       jsonResponse(
         response,
         200,
-        {
-          text,
-          structured: llm.structured,
-          rawResponse: llm.content,
-          llmModel,
-          llmUsage: llm.usage,
-          size: buffer.length,
-          sha256: createHash("sha256").update(buffer).digest("hex"),
-          name: typeof input.name === "string" ? input.name : null,
-          source: "minimax",
-          confidence: "model-derived",
-          trustBoundary: TRUST_BOUNDARY,
-        },
+        normalizeResult(buffer, extracted),
         maxResponseBytes,
       );
     } catch (error) {

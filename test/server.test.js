@@ -167,7 +167,12 @@ test("extract attributes source plain-text with deterministic confidence for unr
   );
 });
 
-test("extract-with-llm attributes source minimax with model-derived confidence", async () => {
+test("extract-with-llm returns 503 provider_disabled even when llmApiKey is configured (fail-closed)", async () => {
+  let providerCalls = 0;
+  const fetchImpl = async () => {
+    providerCalls += 1;
+    return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+  };
   await withServer(
     {
       llmApiKey: "test-key",
@@ -177,26 +182,7 @@ test("extract-with-llm attributes source minimax with model-derived confidence",
         truncated: false,
         invoiceFields: {},
       }),
-      fetchImpl: async () =>
-        new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    documentType: "invoice",
-                    summary: "Summary.",
-                    fields: {},
-                    lineItems: [],
-                    sections: [],
-                    warnings: [],
-                  }),
-                },
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
+      fetchImpl,
     },
     async (baseUrl) => {
       const response = await fetch(`${baseUrl}/extract-with-llm`, {
@@ -204,10 +190,14 @@ test("extract-with-llm attributes source minimax with model-derived confidence",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ data: Buffer.from("pdf").toString("base64") }),
       });
-      assert.equal(response.status, 200);
-      const result = await response.json();
-      assert.equal(result.source, "minimax");
-      assert.equal(result.confidence, "model-derived");
+      assert.equal(response.status, 503);
+      assert.equal(providerCalls, 0, "no provider call must ever happen");
+      const payload = await response.json();
+      assert.deepEqual(payload.error, {
+        code: "provider_disabled",
+        messageKey: "llm_provider_disabled",
+        retry: "never",
+      });
     },
   );
 });
@@ -725,6 +715,36 @@ test("armed: untrusted origin on /extract-with-llm is rejected before the provid
         error: "origin_not_allowed_v1",
       });
       assert.equal(providerCalls, 0);
+    },
+  );
+});
+
+test("/extract-with-llm never parses the body or touches the provider when llmApiKey is absent", async () => {
+  let providerCalls = 0;
+  let extractorCalls = 0;
+  const fetchImpl = async () => {
+    providerCalls += 1;
+    return new Response("{}", { status: 200 });
+  };
+  await withServer(
+    {
+      extract: async () => {
+        extractorCalls += 1;
+        return plainExtract();
+      },
+      fetchImpl,
+    },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/extract-with-llm`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{not-json",
+      });
+      assert.equal(response.status, 503);
+      assert.equal(providerCalls, 0);
+      assert.equal(extractorCalls, 0);
+      const payload = await response.json();
+      assert.equal(payload.error.code, "provider_disabled");
     },
   );
 });

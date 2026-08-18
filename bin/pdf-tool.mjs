@@ -358,10 +358,15 @@ async function main() {
     if (!rest.includes("--rename") && envNow.PDF_RENAME !== "1" && !rest.includes("--no-rename")) {
       doRename = /^s/i.test(await prompt("¿Renombro los PDF con tu formato? (s/N): "));
     }
-    let useLlm = rest.includes("--llm");
-    if (doRename && !rest.includes("--llm") && envNow.MINIMAX_API_KEY) {
-      useLlm = /^s|^y/i.test(await prompt(t("ask_ai_names")));
+    if (rest.includes("--llm")) {
+      // Fail-closed legacy raw-LLM flag (WU-2D). Slice 3 requires every LLM
+      // call to flow through PrivacyTransactionService mediation, so the
+      // CLI never asks the LLM directly. 503 maps to a non-zero exit code
+      // because POSIX caps exit codes at 255.
+      console.error(t("llm_preview_disabled"));
+      process.exit(3);
     }
+    const useLlm = false;
     // output folder: ask if not given via --out
     const outIdx = rest.indexOf("--out");
     let outPath =
