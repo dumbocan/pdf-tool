@@ -92,7 +92,7 @@ describe("NeluPDF selection screen", () => {
     expect(appSource).not.toContain("extract-path");
   });
 
-  it("production CSP is restrictive (no general network source, no inline scripts)", () => {
+  it("production CSP is restrictive and matches the final capability inventory", () => {
     const csp = (tauriConfig as { app: { security: { csp: string } } }).app.security.csp;
     expect(csp, "tauri.conf.json must define a CSP").toBeTruthy();
     expect(csp).toContain("default-src 'none'");
@@ -100,7 +100,6 @@ describe("NeluPDF selection screen", () => {
     expect(csp).not.toContain("http:");
     expect(csp).not.toContain("https:");
     expect(csp).not.toContain("'unsafe-eval'");
-    // 'unsafe-inline' is allowed ONLY for styles (Tailwind), never for scripts.
     expect(csp).toContain("style-src 'self' 'unsafe-inline'");
     expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
   });
