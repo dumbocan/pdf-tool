@@ -329,6 +329,22 @@ async function main() {
   const command = args[0] ?? "";
   const rest = args.slice(1);
 
+  // WU-3A1: fail-closed path-bearing CLI guard. The HTTP /extract-path route
+  // and the MCP extract_pdf_from_path tool already return
+  // unsafe_path_contract_removed_v1 (WU-2B/2C + WU-1B3). The CLI must reject
+  // the same way before any stat/realpath/readFile/extraction work. The typed
+  // error string is the literal contract, not i18n, so consumers can match on
+  // it. Folder-batch (facturas <folder>) is a deterministic local-process
+  // operation under the invoking OS user's authority per design §6.6 line 645
+  // and stays unchanged.
+  if (
+    command === "extract-path" ||
+    args.some((a) => a === "--extract-path" || a.startsWith("--extract-path="))
+  ) {
+    console.error("unsafe_path_contract_removed_v1");
+    process.exit(2);
+  }
+
   if (command === "config" || command === "clave") {
     await runConfig(rest);
     return;

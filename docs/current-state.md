@@ -1,5 +1,17 @@
 # Current State
 
+WU-3A1 (fail-closed path-bearing CLI + MCP migration) is on `wu-3a1`. The
+path-bearing single-PDF route now returns `unsafe_path_contract_removed_v1`
+unconditionally on every surface — HTTP `/extract-path` (already WU-2B/2C),
+CLI `--extract-path` / `extract-path` subcommand (new, with `--extract-path=value`
+form), and MCP `extract_pdf_from_path` (already fail-closed in WU-1B3). The
+shared `UNSAFE_PATH_MIGRATION` envelope from `src/mcp-facade.js` is reused by
+the CLI guard. Folder-batch (`facturas <folder>`) stays a deterministic
+local-process operation under the invoking OS user's authority, per design
+§6.6 line 645 — the CLI guard sits in `main()` before any command dispatch,
+so no `stat`, `realpath`, `readFile`, or extraction code is reached when the
+typed envelope is emitted.
+
 WU-2D (fail-closed legacy raw-LLM route migration) is on `wu-2d`. The three
 raw-LLM egress points — HTTP `/extract-with-llm`, CLI `--llm`, and MCP
 `extract_pdf_with_llm` — now return `provider_disabled` unconditionally
@@ -138,7 +150,7 @@ Frontend verification: `pnpm test -- --run` passes **22 tests**; `pnpm build` su
   the bare decimal.
 
 Verification: `node --test test/privacy-service.test.js` passes **35 tests**; full Node suite
-passes **210 tests** (was 175 before this slice).
+passes **217 tests** (was 175 before this slice).
 
 ## Test inventory
 
@@ -159,6 +171,7 @@ passes **210 tests** (was 175 before this slice).
 | Frontend total | **22** | `pnpm test` |
 | Privacy service | **35** | `node --test test/privacy-service.test.js` |
 | extract (text + bbox) | **19** | `node --test test/extract.test.js` |
-| Other Node (server, providers, vendor-parsers, …) | **162** | `node --test test/*.test.js` |
-| Node total | **216** | `node --test test/*.test.js` |
-| **Grand total** | **308** | |
+| CLI fail-closed (`--llm`, `--extract-path`) | **7** | `node --test test/cli-*.test.js` |
+| Other Node (server, providers, vendor-parsers, …) | **156** | `node --test test/*.test.js` |
+| Node total | **217** | `node --test test/*.test.js` |
+| **Grand total** | **309** | |
