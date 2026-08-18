@@ -73,3 +73,23 @@ test("LATAM identifiers are masked", () => {
   assert.ok(!out.includes("MEF780101A01"), "RFC real no aparece");
   assert.ok(!out.includes("20-12345678-9"), "CUIT real no aparece");
 });
+
+test("deterministic factor with seed", () => {
+  const p1 = createPseudonymizer({ seed: 42 });
+  const p2 = createPseudonymizer({ seed: 42 });
+  assert.equal(p1.factor, p2.factor, "same seed -> same deterministic factor");
+  // 3 + (42 % 10) = 3 + 2 = 5
+  assert.equal(p1.factor, 5, "seed=42 -> factor=5 (3 + seed%10)");
+  const out1 = p1.pseudonymize("NIF: 12345678Z, Total: 1512.50 €");
+  const out2 = p2.pseudonymize("NIF: 12345678Z, Total: 1512.50 €");
+  assert.equal(out1, out2, "same seed -> same pseudonymized output (snapshot-reproducible)");
+  // negative seed: Math.abs() lo trata igual que positivo
+  const pNeg = createPseudonymizer({ seed: -42 });
+  assert.equal(pNeg.factor, 5, "seed=-42 -> factor=5 (Math.abs)");
+  // otro seed produce otro factor (rango 3..12)
+  const pOther = createPseudonymizer({ seed: 7 });
+  assert.equal(pOther.factor, 10, "seed=7 -> factor=10 (3 + 7%10)");
+  // no seed -> factor aleatorio en [3,12]
+  const pRandom = createPseudonymizer();
+  assert.ok(pRandom.factor >= 3 && pRandom.factor <= 12, "sin seed -> factor aleatorio en rango");
+});
