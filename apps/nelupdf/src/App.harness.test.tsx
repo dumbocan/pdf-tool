@@ -248,6 +248,45 @@ describe("NeluPDF selection screen", () => {
     expect(appSource).toMatch(/política de retención/i);
     expect(appSource).toMatch(/retention/);
   });
+
+  it("exposes a retry button with non-color recovery guidance for retryable errors", async () => {
+    await uploadPdf(
+      fakeApi({
+        ok: false,
+        protocolVersion: 1,
+        requestId: "123e4567-e89b-42d3-a456-426614174001",
+        error: {
+          code: "input_too_large",
+          messageKey: "input_too_large",
+          retry: "user_action",
+        },
+      }),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/supera el límite/i);
+    const retry = screen.getByRole("button", { name: /reintentar extracción/i });
+    expect(retry).toBeInTheDocument();
+  });
+
+  it("does not expose a retry button for errors marked never-retry", async () => {
+    await uploadPdf(
+      fakeApi({
+        ok: false,
+        protocolVersion: 1,
+        requestId: "123e8400-e29b-41d4-a716-446655440000",
+        error: {
+          code: "internal",
+          messageKey: "internal",
+          retry: "never",
+        },
+      }),
+    );
+
+    await screen.findByRole("alert");
+    expect(screen.queryByRole("button", { name: /reintentar/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /reiniciar/i })).toBeNull();
+  });
 });
 
 describe("accessibility harness self-check (not App evidence)", () => {

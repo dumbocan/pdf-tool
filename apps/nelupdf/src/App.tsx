@@ -12,6 +12,7 @@ import type {
   LocalExtractionV1,
   MatchedField,
   PublicError,
+  RetryCategory,
   Template,
 } from "./lib/types";
 import { uuidv4 } from "./lib/uuid";
@@ -422,23 +423,33 @@ function App({
                     {r.tax} {r.taxLabel}
                   </td>
                   <td>{r.total}</td>
-                  <td>
-                    {r.error ? (
-                      `⚠ ${errorMessage(r.error)}`
-                    ) : r.state === "complete" || r.state === "truncated" ? (
-                      `✔ ${stateLabel(r.state)}`
-                    ) : r.state === "partial" ? (
-                      stateLabel(r.state)
-                    ) : (
-                      <button
-                        onClick={() => requestLlmPreview(r)}
-                        disabled={llmBusy}
-                        className="btn-ia"
-                      >
-                        Extraer con IA
-                      </button>
-                    )}
-                  </td>
+                   <td>
+                     {r.error ? (
+                       <span role="alert" className="row-error-group">
+                         <span className="row-error-text">⚠ {errorMessage(r.error)}</span>
+                         {retryAction(r.error.retry, r.file) && (
+                           <button
+                             onClick={retryAction(r.error.retry, r.file)!}
+                             className="btn-retry"
+                           >
+                             {retryLabel(r.error.retry)}
+                           </button>
+                         )}
+                       </span>
+                     ) : r.state === "complete" || r.state === "truncated" ? (
+                       `✔ ${stateLabel(r.state)}`
+                     ) : r.state === "partial" ? (
+                       stateLabel(r.state)
+                     ) : (
+                       <button
+                         onClick={() => requestLlmPreview(r)}
+                         disabled={llmBusy}
+                         className="btn-ia"
+                       >
+                         Extraer con IA
+                     </button>
+                     )}
+                   </td>
                 </tr>
               ))}
             </tbody>
@@ -669,6 +680,32 @@ function stateLabel(state: ExtractionState): string {
 
 function internalError(): PublicError {
   return { code: "internal", messageKey: "internal", retry: "never" };
+}
+
+// Maps a RetryCategory to an actionable label (design WU-4C1: deliberate
+// retry semantics — the user must choose to retry, never auto-retry on failure).
+function retryLabel(retry: RetryCategory): string | null {
+  switch (retry) {
+    case "user_action":
+      return "Reintentar extracción";
+    case "new_transaction":
+      return "Seleccionar otro archivo";
+    case "restart_app":
+      return "Reiniciar aplicación";
+    default:
+      return null;
+  }
+}
+
+function retryAction(retry: RetryCategory, file: string): (() => void) | null {
+  const label = retryLabel(retry);
+  if (!label) return null;
+  return () => {
+    // Deliberate retry triggers the file-selection dialog again so the user
+    // chooses what to retry — we never auto-re-extract a previously failed row.
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    input?.click();
+  };
 }
 
 export default App;
