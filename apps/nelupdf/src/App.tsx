@@ -473,7 +473,8 @@ function App({
             <button
               onClick={() => {
                 setRows([]);
-                setReview(null);
+                setReviewQueue([]);
+                setReviewIndex(0);
                 void store.clear();
               }}
               disabled={processing || rows.length === 0}
