@@ -233,12 +233,21 @@ pub fn parse_frame(buf: &[u8]) -> Result<serde_json::Value, ContractError> {
 }
 
 pub fn find_engine_path() -> Option<PathBuf> {
+    // WU-5A2-GREEN: check bundled resources first (tauri resource_dir).
+    if let Ok(resource_dir) = std::env::var("RESOURCE_DIR") {
+        let bundled = PathBuf::from(&resource_dir).join("engine-stdio.js");
+        if bundled.is_file() {
+            return Some(bundled);
+        }
+    }
+    // Environment override (dev / CI).
     if let Ok(path) = std::env::var("PDF_TOOL_ENGINE_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
             return Some(path);
         }
     }
+    // Dev-mode fallback (relative to binary); NOT used in promoted build.
     let mut candidates = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
@@ -247,9 +256,6 @@ pub fn find_engine_path() -> Option<PathBuf> {
         }
     }
     candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../src/engine-stdio.js"));
-    candidates.push(PathBuf::from(
-        "/home/jmon/.pdf-tool-wu1a1/src/engine-stdio.js",
-    ));
     candidates.into_iter().find(|path| path.is_file())
 }
 
