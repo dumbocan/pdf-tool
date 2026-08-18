@@ -68,6 +68,24 @@ jobs:
         working-directory: apps/nelupdf
         run: pnpm exec tsc --noEmit
 
+  tauri-binary-smoke:
+    name: Tauri binary smoke (Slice 5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Tauri binary (bypass tauri-cli watcher)
+        working-directory: apps/nelupdf/src-tauri
+        # cargo build bypasses tauri-cli watcher (EMFILE bug at
+        # interface/rust.rs:146). See docs/tauri-build-workaround.md (WU-5A1)
+        run: cargo build --bin nelupdf --manifest-path Cargo.toml
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run binary smoke + source-level CSP tests
+        run: node --test apps/nelupdf/test/tauri-binary-smoke.test.js
+
   rust-boundary:
     name: Rust unit + check + fmt
     runs-on: ubuntu-latest
