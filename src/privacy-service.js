@@ -222,6 +222,20 @@ export class AuditSink {
   clear() {
     this._events.length = 0;
   }
+
+  // Content-free diagnostic export (design §4.4). Returns a copy of the
+  // events suitable for support/debugging without exposing transaction
+  // payloads, pseudonyms, or PDF artifacts. Each event is reduced to its
+  // allowlisted fields and a stable ordering key.
+  exportDiagnostics() {
+    return this._events.map((event) => ({
+      kind: event.kind,
+      operationCorrelationId: event.operationCorrelationId,
+      transactionId: event.transactionId,
+      outcome: event.outcome,
+      timestamp: event.timestamp,
+    }));
+  }
 }
 
 function validateAuditEvent(event) {

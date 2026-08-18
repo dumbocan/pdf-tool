@@ -853,6 +853,56 @@ describe("AuditSink — closed enum and content-free guarantee", () => {
     snapshot.length = 0;
     assert.equal(sink.size, 1, "mutating the snapshot must not clear the buffer");
   });
+
+  it("rejects a sensitive-marker field that is not on the allowlist", () => {
+    const sink = new AuditSink();
+    assert.throws(
+      () =>
+        sink.emit({
+          kind: AuditEvent.TX_PREPARE,
+          operationCorrelationId: VALID_REQUEST_ID,
+          transactionId: "AAAAAAAAAAAAAAAAAAAAAA",
+          outcome: "prepared",
+          timestamp: 1,
+          pii: "user@email.com",
+        }),
+      /unknown field: pii/,
+    );
+  });
+
+  it("exportDiagnostics returns only allowlisted content-free fields", () => {
+    const sink = new AuditSink();
+    sink.emit({
+      kind: AuditEvent.TX_CANCELLED,
+      operationCorrelationId: VALID_REQUEST_ID,
+      transactionId: "AAAAAAAAAAAAAAAAAAAAAA",
+      outcome: "cancelled",
+      timestamp: 1_700_000_000_000,
+    });
+    const exported = sink.exportDiagnostics();
+    assert.equal(exported.length, 1);
+    assert.deepEqual(Object.keys(exported[0]).sort(), [
+      "kind",
+      "operationCorrelationId",
+      "outcome",
+      "timestamp",
+      "transactionId",
+    ]);
+  });
+
+  it("exportDiagnostics is a snapshot — mutating it must not affect the sink", () => {
+    const sink = new AuditSink();
+    sink.emit({
+      kind: AuditEvent.TX_CANCELLED,
+      operationCorrelationId: VALID_REQUEST_ID,
+      transactionId: "AAAAAAAAAAAAAAAAAAAAAA",
+      outcome: "cancelled",
+      timestamp: 1,
+    });
+    const snapshot = sink.exportDiagnostics();
+    snapshot.length = 0;
+    assert.equal(sink.size, 1, "mutating exportDiagnostics must not clear the buffer");
+  });
 });
 
 describe("Provider registry — Slice 3 fail-closed gate", () => {
