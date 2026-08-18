@@ -15,6 +15,7 @@ import type {
   Template,
 } from "./lib/types";
 import { uuidv4 } from "./lib/uuid";
+import { csvCell, encodeCsv } from "./features/export/csv.ts";
 
 type ExtractionState =
   | "idle"
@@ -474,37 +475,24 @@ function App({
   );
 }
 
+const CSV_COLUMNS = [
+  "file",
+  "invoiceNumber",
+  "invoiceDate",
+  "subtotal",
+  "tax",
+  "total",
+  "taxLabel",
+] as const;
+
 function exportCsv(rows: Row[]) {
-  const header =
-    "archivo,invoiceNumber,invoiceDate,subtotal,tax,total,taxLabel\n";
-  const body = rows
-    .map((r) =>
-      [
-        r.file,
-        r.invoiceNumber,
-        r.invoiceDate,
-        r.subtotal,
-        r.tax,
-        r.total,
-        r.taxLabel,
-      ]
-        .map(csvCell)
-        .join(","),
-    )
-    .join("\n");
-  const blob = new Blob([header + body], { type: "text/csv" });
+  const csv = encodeCsv(rows, CSV_COLUMNS);
+  const blob = new Blob([csv], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "facturas.csv";
   a.click();
   URL.revokeObjectURL(a.href);
-}
-
-function csvCell(v: string) {
-  // CSV hardening (el motor ya lo hace; acá también): prevenir inyección de fórmulas
-  const s = String(v ?? "");
-  if (/^[=+\-@]/.test(s)) return `"${s}"`;
-  return s.includes(",") ? `"${s}"` : s;
 }
 
 function emptyRow(file: string, state: ExtractionState, error?: PublicError): Row {
