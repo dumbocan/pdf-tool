@@ -596,10 +596,38 @@ describe("PrivacyTransactionService.confirm — atomic single-use consume", () =
           transactionId: "BBBBBBBBBBBBBBBBBBBBBB",
           requestId: VALID_REQUEST_ID,
         }),
-      (err) => err instanceof PrivacyTransactionError && err.code === "tx_unknown",
-    );
+        (err) => err instanceof PrivacyTransactionError && err.code === "tx_unknown",
+      );
+    });
+
+    it("concurrent confirms of the same transactionId resolve to one success and the rest to tx_already_consumed", () => {
+      const service = makeService();
+      const bound = service.prepare(makePrepareArgs());
+
+      const successes = [];
+      const failures = [];
+      for (let i = 0; i < 5; i++) {
+        try {
+          const result = service.confirm({
+            transactionId: bound.transactionId,
+            requestId: `550e8400-e29b-41d4-a716-446655${String(440010 + i).padStart(6, "0")}`,
+          });
+          successes.push(result);
+        } catch (e) {
+          failures.push(e.code);
+        }
+      }
+
+      assert.equal(successes.length, 1, "exactly one confirm should succeed");
+      assert.equal(failures.length, 4, "the rest should fail with tx_already_consumed");
+      assert.ok(
+        failures.every((code) => code === "tx_already_consumed"),
+        "every failure must be tx_already_consumed",
+      );
+      assert.ok(successes[0].request.exactPayloadBytes instanceof Uint8Array);
+      assert.ok(successes[0].request.exactPayloadBytes.byteLength > 0);
+    });
   });
-});
 
 describe("PrivacyTransactionService — lifetime, cancellation, and clear", () => {
   it("cancelTransaction removes the transaction and emits tx_cancelled", () => {
