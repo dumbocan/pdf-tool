@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 import appSource from "./App.tsx?raw";
+import tauriConfig from "../src-tauri/tauri.conf.json";
 import type { DesktopApi } from "./lib/desktop-api";
 import type { LocalExtractionV1, MatchedField } from "./lib/types";
 
@@ -89,6 +90,19 @@ describe("NeluPDF selection screen", () => {
     expect(appSource).not.toContain("VITE_MOTOR_URL");
     expect(appSource).not.toContain("127.0.0.1:3000");
     expect(appSource).not.toContain("extract-path");
+  });
+
+  it("production CSP is restrictive (no general network source, no inline scripts)", () => {
+    const csp = (tauriConfig as { app: { security: { csp: string } } }).app.security.csp;
+    expect(csp, "tauri.conf.json must define a CSP").toBeTruthy();
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).not.toContain("http:");
+    expect(csp).not.toContain("https:");
+    expect(csp).not.toContain("'unsafe-eval'");
+    // 'unsafe-inline' is allowed ONLY for styles (Tailwind), never for scripts.
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
+    expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
   });
 
   it("registers and extracts a selected PDF through Tauri IPC", async () => {
