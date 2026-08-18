@@ -59,3 +59,29 @@ test("WU-5A2-TRIANGULATE: hardcoded absolute path removed from loader", () => {
   assert.equal(/home\/jmon|\/home\/.*\.pdf-tool/.test(engine), false,
     "loader must not contain hardcoded absolute paths");
 });
+
+// WU-5A2-REFACTOR: dependency/license/scope gates
+const CARGO_TOML = path.join(TAURI_DIR, "Cargo.toml");
+const ENGINE_JS = path.resolve(import.meta.dirname, "..", "..", "..", "src/engine-stdio.js");
+
+test("WU-5A2-REFACTOR: Cargo.toml declares an OSI license", () => {
+  const cargo = fs.readFileSync(CARGO_TOML, "utf8");
+  assert.ok(/license\s*=/.test(cargo),
+    "Cargo.toml must declare a license field for packaging integrity");
+});
+
+test("WU-5A2-REFACTOR: engine-stdio.js uses only stdlib + local imports", () => {
+  // The Node sidecar must not pull external dependencies (no package.json deps)
+  // so the bundled resource has a closed/scrutable dependency surface.
+  const engine = fs.readFileSync(ENGINE_JS, "utf8");
+  assert.equal(/^import .* from "node:/.test(engine) || /^import .*node:crypto/.test(engine), true,
+    "must use node: stdlib imports");
+  // No bare-specifier external packages (e.g., 'fs' without 'node:', or npm deps).
+  const external = engine.match(/^import .+ from "([^"']+)"/gm) || [];
+  const nonStdlib = external.filter((m) => {
+    const spec = m.match(/from "([^"]+)"/)[1];
+    return !spec.startsWith("node:") && !spec.startsWith("./") && !spec.startsWith("../");
+  });
+  assert.equal(nonStdlib.length, 0,
+    "engine-stdio.js must not import external packages: " + JSON.stringify(nonStdlib));
+});
