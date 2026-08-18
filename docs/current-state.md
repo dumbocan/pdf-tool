@@ -119,11 +119,25 @@ Frontend verification: `pnpm test -- --run` passes **22 tests**; `pnpm build` su
     creates a fresh per-transaction `pseudonymizer`, builds the minimized task payload from
     `localExtraction.invoice`, scrubs PDF artifacts (`%PDF-…`, `%%EOF`, XMP markers), hashes
     the canonical JSON bytes, binds everything into a 60 s transaction, returns
-    `BoundTransaction` + `disclosure` + `expiresAt`. No upstream call.
+    `BoundTransaction` + `disclosure` + `expiresAt`. No upstream call. The transaction
+    record carries a `localFields` allowlist (derived from `invoice.matched` plus the
+    standard invoice / totals keys) so the response validator never has to keep a parallel
+    schema in sync.
   - `confirm({ transactionId, requestId, providerId?, modelId?, purpose? })`: atomically
     validates (tx_unknown / tx_already_consumed / tx_expired / tx_mismatch), marks consumed,
     emits `tx_confirm_attempt` + `tx_confirm_consumed`, returns `{ request, onSent }`. The
     `request.exactPayloadBytes` is a fresh `Uint8Array` view of the stored bytes.
+  - **`validateProviderResponse({ transactionId, requestId, responseBytes, contentType })`**
+    (WU-3C2): byte-bounded (`RESPONSE_LIMIT_BYTES`), content-type checked
+    (`application/json`), JSON-parsed, schema-validated against a closed v1 response
+    (`schemaVersion`, `requestId`, `confidence ∈ {high, medium, low}`, `fields`,
+    `warnings`), and reverse-mapped via the per-transaction pseudonymizer — exact map
+    membership only. Defensive scan rejects any string field that shape-matches PII but
+    has no matching reverse-map entry (anti-hallucination). Returns a frozen
+    `{ requestId, confidence, fields, warnings }`. Contract violations share one error
+    code: `provider_response_invalid` (the unified vocabulary covers content-type, byte
+    limit, JSON parse, schema, allowlist, and unmapped PII). Transaction-state failures
+    keep their existing `tx_unknown` / `tx_mismatch` codes.
   - `cancelTransaction`, `cleanup`, `clear`, `shutdown`: lifecycle. Audit events always
     carry a non-empty `operationCorrelationId` (synthetic fallback `cancel:<tx>` /
     `auto-cleanup:<tx>` when no caller operation exists).
@@ -137,8 +151,8 @@ Frontend verification: `pnpm test -- --run` passes **22 tests**; `pnpm build` su
   amount matcher fires; the suffix is stripped before serializing. Reverse map is keyed by
   the bare decimal.
 
-Verification: `node --test test/privacy-service.test.js` passes **35 tests**; full Node suite
-passes **210 tests** (was 175 before this slice).
+Verification: `node --test test/privacy-service.test.js` passes **45 tests** (was 39 before
+WU-3C2); full Node suite passes **219 tests** (was 213, +6 net).
 
 ## Test inventory
 
@@ -157,8 +171,8 @@ passes **210 tests** (was 175 before this slice).
 | Frontend VisualReview | 8 | `pnpm test` |
 | Frontend template-store | 6 | `pnpm test` |
 | Frontend total | **22** | `pnpm test` |
-| Privacy service | **35** | `node --test test/privacy-service.test.js` |
+| Privacy service | **45** | `node --test test/privacy-service.test.js` |
 | extract (text + bbox) | **19** | `node --test test/extract.test.js` |
-| Other Node (server, providers, vendor-parsers, …) | **162** | `node --test test/*.test.js` |
-| Node total | **216** | `node --test test/*.test.js` |
-| **Grand total** | **308** | |
+| Other Node (server, providers, vendor-parsers, …) | **155** | `node --test test/*.test.js` |
+| Node total | **219** | `node --test test/*.test.js` |
+| **Grand total** | **311** | |

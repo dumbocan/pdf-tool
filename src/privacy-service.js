@@ -51,6 +51,30 @@ export const RESPONSE_LIMIT_BYTES = 1_048_576;
 // contract. Bumping this is a contract change.
 export const PAYLOAD_MEDIA_TYPE = "application/json";
 
+// Closed vocabulary for `confidence` in a v1 provider response. Anything
+// outside this set is rejected as provider_response_invalid — provider
+// freedom to rate its own certainty is bounded by a published enum.
+export const RESPONSE_CONFIDENCE_VALUES = Object.freeze(["high", "medium", "low"]);
+
+// Maximum number of warning strings per provider response. Keeps a
+// misbehaving provider from streaming content through the warnings slot.
+const RESPONSE_WARNINGS_MAX = 32;
+
+// Maximum characters per warning string. Content-free by construction —
+// warnings are advisory labels, not user-facing diagnostics.
+const RESPONSE_WARNING_MAX_CHARS = 1024;
+
+// PII patterns scanned on the inbound response. Mirrors the outbound
+// pseudonymizer's allowlist (src/pseudonymize.js) so an unmapped match
+// here can be attributed to a provider leak or hallucination, not to the
+// original document content.
+const RESPONSE_PII_PATTERNS = Object.freeze([
+  /[XYZ]?\d{7,8}[A-Z]/g, // ES NIF / DNI / NIE
+  /[ABCDEFGHJNPQRSUVW](?:[O0]\d{7}[A-Z0-9]?|\d{7}[A-Z0-9]|\d{8})/g, // ES CIF
+  /\b[A-Z]{2}\d{2}[ ]?\d{4}[ ]?\d{4}[ ]?\d{4}[ ]?\d{4}[ ]?\d{4}\b/g, // IBAN
+  /\b[\w.+-]+@[\w-]+\.[\w.]+\b/g, // EMAIL
+]);
+
 // Hard cap on every string field in an AuditEvent. Keeps a malicious or
 // buggy caller from sneaking document content into an opaque ID slot.
 const AUDIT_STRING_FIELD_MAX = 256;
@@ -412,6 +436,172 @@ function scrubPayloadArtifacts(payload) {
   });
 }
 
+// === Response validation helpers (WU-3C2) ================================
+
+// Derive the closed allowlist of field names the provider is allowed to
+// echo back. Built from the same invoice / totals / matched structure
+// minimizePayload reads, so anything outside the allowlist is rejected
+// as a contract violation before any reverse-mapping is attempted.
+function computeLocalFields(localExtraction) {
+  const invoice =
+    localExtraction && typeof localExtraction === "object"
+      ? localExtraction.invoice
+      : null;
+  const fields = new Set();
+  if (invoice && typeof invoice === "object") {
+    for (const key of [
+      "invoiceNumber",
+      "invoiceDate",
+      "simplifiedInvoiceDate",
+      "taxLabel",
+    ]) {
+      if (typeof invoice[key] === "string" && invoice[key].length > 0) {
+        fields.add(key);
+      }
+    }
+    if (invoice.totals && typeof invoice.totals === "object") {
+      for (const key of ["subtotal", "tax", "total"]) {
+        if (
+          typeof invoice.totals[key] === "string" &&
+          invoice.totals[key].length > 0
+        ) {
+          fields.add(key);
+        }
+      }
+    }
+    if (Array.isArray(invoice.matched)) {
+      for (const m of invoice.matched) {
+        const label = typeof m === "string" ? m : m && m.label;
+        if (typeof label === "string" && label.length > 0) fields.add(label);
+      }
+    }
+  }
+  return Object.freeze([...fields].sort());
+}
+
+// True when the value shape-matches any PII pattern from
+// src/pseudonymize.js. Defensive copy of the regex flags (without /g we
+// would carry the lastIndex across tests and silently skip matches).
+function responseStringMatchesPii(value) {
+  for (const pattern of RESPONSE_PII_PATTERNS) {
+    // Reset the regex state so /g doesn't leak between calls.
+    pattern.lastIndex = 0;
+    if (pattern.test(value)) return true;
+  }
+  return false;
+}
+
+// Validate the closed v1 provider response schema. Any deviation from
+// the schema — content-type, byte limit, JSON parse, missing field,
+// unknown enum value, oversized warning — fails with the unified
+// `provider_response_invalid` code.
+function validateProviderResponseShape(parsed, expectedRequestId) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new PrivacyTransactionError(
+      "response body must be a JSON object",
+      "provider_response_invalid",
+    );
+  }
+  if (parsed.schemaVersion !== "v1") {
+    throw new PrivacyTransactionError(
+      `response schemaVersion must be "v1" (got ${JSON.stringify(parsed.schemaVersion)})`,
+      "provider_response_invalid",
+    );
+  }
+  if (typeof parsed.requestId !== "string" || parsed.requestId === "") {
+    throw new PrivacyTransactionError(
+      "response requestId must be a non-empty string",
+      "provider_response_invalid",
+    );
+  }
+  if (parsed.requestId !== expectedRequestId) {
+    throw new PrivacyTransactionError(
+      "response requestId does not match the bound transaction",
+      "provider_response_invalid",
+    );
+  }
+  if (
+    typeof parsed.confidence !== "string" ||
+    !RESPONSE_CONFIDENCE_VALUES.includes(parsed.confidence)
+  ) {
+    throw new PrivacyTransactionError(
+      `response confidence must be one of ${RESPONSE_CONFIDENCE_VALUES.join(",")}`,
+      "provider_response_invalid",
+    );
+  }
+  if (
+    !parsed.fields ||
+    typeof parsed.fields !== "object" ||
+    Array.isArray(parsed.fields)
+  ) {
+    throw new PrivacyTransactionError(
+      "response fields must be a non-array object",
+      "provider_response_invalid",
+    );
+  }
+  if (!Array.isArray(parsed.warnings)) {
+    throw new PrivacyTransactionError(
+      "response warnings must be an array",
+      "provider_response_invalid",
+    );
+  }
+  if (parsed.warnings.length > RESPONSE_WARNINGS_MAX) {
+    throw new PrivacyTransactionError(
+      `response warnings must contain at most ${RESPONSE_WARNINGS_MAX} entries`,
+      "provider_response_invalid",
+    );
+  }
+  for (let i = 0; i < parsed.warnings.length; i++) {
+    const w = parsed.warnings[i];
+    if (
+      typeof w !== "string" ||
+      w.length === 0 ||
+      w.length > RESPONSE_WARNING_MAX_CHARS
+    ) {
+      throw new PrivacyTransactionError(
+        `response warnings[${i}] must be a non-empty string of 1..${RESPONSE_WARNING_MAX_CHARS} chars`,
+        "provider_response_invalid",
+      );
+    }
+  }
+}
+
+// Every key on the response's `fields` object must already be in the
+// allowlist derived at prepare time. Anything else is a contract
+// violation, not a privacy concern — we still reject it before any
+// reverse-map work happens.
+function assertResponseFieldsAllowlisted(fields, allowlist) {
+  const allowed = new Set(allowlist);
+  for (const key of Object.keys(fields)) {
+    if (!allowed.has(key)) {
+      throw new PrivacyTransactionError(
+        `response field "${key}" is not in the bound allowlist`,
+        "provider_response_invalid",
+      );
+    }
+  }
+}
+
+// Defense-in-depth: after reverse-mapping, scan the values for raw PII
+// the provider could only know by leaking source content or by
+// hallucinating identifiers. The reverse map is the single source of
+// truth — a value shape-matching PII with no matching map entry is
+// always rejected, even when the response schema itself is well-formed.
+function detectUnmappedSensitiveFields(pseudonymizer, fields) {
+  for (const [key, value] of Object.entries(fields)) {
+    if (value == null) continue;
+    if (typeof value === "string") {
+      const reversed = pseudonymizer.reversePii(value);
+      if (reversed === value && responseStringMatchesPii(value)) {
+        throw new PrivacyTransactionError(
+          `response field "${key}" contains unmapped PII`,
+          "provider_response_invalid",
+        );
+      }
+    }
+  }
+}
+
 // === Service =============================================================
 
 export class PrivacyTransactionService {
@@ -584,6 +774,11 @@ export class PrivacyTransactionService {
       payloadSha256,
       documentSha256,
       pseudonymizer,
+      // Closed allowlist of field names the provider is allowed to echo
+      // back. Derived from the same invoice/totals/matched structure
+      // minimizePayload reads so the response validator never has to
+      // keep a parallel schema in sync (WU-3C2).
+      localFields: computeLocalFields(localExtraction),
       expiresAtMs,
       consumed: false,
       operationCorrelationId: operationCorrelationId ?? null,
@@ -837,6 +1032,130 @@ export class PrivacyTransactionService {
     };
 
     return { request, onSent };
+  }
+
+  // === Validate provider response ======================================
+
+  // Validate the provider response bytes that came back after
+  // confirm(). The contract (design §5.5) requires every byte of the
+  // response to be:
+  //   1. bound to a consumed transaction that the caller actually
+  //      confirmed (else no provider call could have happened);
+  //   2. inside RESPONSE_LIMIT_BYTES;
+  //   3. declared as `application/json`;
+  //   4. parseable JSON that matches the closed v1 schema;
+  //   5. mapped back to the outbound values via the transaction's
+  //      per-transaction reverse map — exact membership only;
+  //   6. free of raw PII that no map entry can explain.
+  //
+  // Any failure surfaces as `provider_response_invalid` so adapters
+  // share one error code path; failures in the transaction state itself
+  // (missing / not consumed / wrong requestId) keep their existing
+  // tx_unknown / tx_mismatch codes so the contract stays observable.
+  validateProviderResponse({
+    transactionId,
+    requestId,
+    responseBytes,
+    contentType,
+  } = {}) {
+    if (typeof transactionId !== "string" || transactionId.length === 0) {
+      throw new PrivacyTransactionError(
+        "transactionId is required",
+        "invalid_request",
+      );
+    }
+    if (typeof requestId !== "string" || requestId.length === 0) {
+      throw new PrivacyTransactionError(
+        "requestId is required",
+        "invalid_request",
+      );
+    }
+    if (responseBytes == null) {
+      throw new PrivacyTransactionError(
+        "responseBytes is required",
+        "invalid_request",
+      );
+    }
+    if (
+      !(responseBytes instanceof Uint8Array) &&
+      !Buffer.isBuffer(responseBytes)
+    ) {
+      throw new PrivacyTransactionError(
+        "responseBytes must be a Uint8Array or Buffer",
+        "invalid_request",
+      );
+    }
+    if (typeof contentType !== "string" || contentType === "") {
+      throw new PrivacyTransactionError(
+        "contentType is required",
+        "invalid_request",
+      );
+    }
+
+    const tx = this._transactions.get(transactionId);
+    if (!tx) {
+      throw new PrivacyTransactionError(
+        `unknown transaction ${transactionId}`,
+        "tx_unknown",
+      );
+    }
+    // Provider can only respond after confirm(). A non-consumed
+    // transaction here means the caller misordered operations — treat
+    // it as a state mismatch so the existing tx_mismatch code path
+    // owns this class of bug.
+    if (!tx.consumed) {
+      throw new PrivacyTransactionError(
+        `transaction ${transactionId} was not consumed before validating a provider response`,
+        "tx_mismatch",
+      );
+    }
+    if (requestId !== tx.consumedByRequestId) {
+      throw new PrivacyTransactionError(
+        `requestId ${requestId} does not match the transaction's consumed requestId`,
+        "tx_mismatch",
+      );
+    }
+
+    // Byte guard — every response above RESPONSE_LIMIT_BYTES is a
+    // contract violation, not a privacy concern, but we share the same
+    // error code so adapters handle one failure path.
+    if (responseBytes.length > RESPONSE_LIMIT_BYTES) {
+      throw new PrivacyTransactionError(
+        `response body exceeds ${RESPONSE_LIMIT_BYTES} bytes`,
+        "provider_response_invalid",
+      );
+    }
+    if (contentType !== PAYLOAD_MEDIA_TYPE) {
+      throw new PrivacyTransactionError(
+        `response contentType must be "${PAYLOAD_MEDIA_TYPE}" (got "${contentType}")`,
+        "provider_response_invalid",
+      );
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(Buffer.from(responseBytes).toString("utf8"));
+    } catch (err) {
+      throw new PrivacyTransactionError(
+        `response body is not valid JSON: ${err && err.message ? err.message : String(err)}`,
+        "provider_response_invalid",
+      );
+    }
+
+    validateProviderResponseShape(parsed, requestId);
+    assertResponseFieldsAllowlisted(parsed.fields, tx.localFields);
+
+    // Reverse-map per field. We copy first so an exception thrown by
+    // the detection helper doesn't leak the partially-mutated values.
+    const reversed = tx.pseudonymizer.reverseDeep(parsed.fields);
+    detectUnmappedSensitiveFields(tx.pseudonymizer, parsed.fields);
+
+    return Object.freeze({
+      requestId,
+      confidence: parsed.confidence,
+      fields: Object.freeze(reversed),
+      warnings: Object.freeze([...parsed.warnings]),
+    });
   }
 
   // === Cancellation / cleanup ==========================================

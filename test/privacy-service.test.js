@@ -26,9 +26,12 @@ import {
   AUDIT_EVENT_CAP,
   AuditEvent,
   AuditSink,
+  PAYLOAD_MEDIA_TYPE,
   PrivacyTransactionError,
   PrivacyTransactionService,
   ProviderDisabledError,
+  RESPONSE_CONFIDENCE_VALUES,
+  RESPONSE_LIMIT_BYTES,
   TRANSACTION_TTL_MS,
   createDefaultProviderRegistry,
 } from "../src/privacy-service.js";
@@ -906,5 +909,215 @@ describe("PrivacyTransactionService — internal reverse map semantics", () => {
     // their own factor — i.e. the inputs were not shared between maps.
     assert.equal(bound1.payloadSha256.length, 64);
     assert.equal(bound2.payloadSha256.length, 64);
+  });
+});
+
+describe("PrivacyTransactionService.validateProviderResponse — WU-3C2 contract", () => {
+  // Helpers shared by the validation tests. Each test builds a fresh
+  // service + transaction and consumes it before calling
+  // validateProviderResponse so the lifecycle mirrors production.
+  function buildConsumed(overrides = {}) {
+    const service = makeService();
+    const bound = service.prepare(makePrepareArgs(overrides));
+    service.confirm({
+      transactionId: bound.transactionId,
+      requestId: VALID_REQUEST_ID,
+    });
+    return { service, bound };
+  }
+
+  function readPayload(service, transactionId) {
+    const tx = service._transactions.get(transactionId);
+    return JSON.parse(Buffer.from(tx.payloadBytes).toString("utf8"));
+  }
+
+  it("accepts a structurally valid response, reverse-maps markers, and returns the bound identifiers", () => {
+    const { service, bound } = buildConsumed();
+    const outbound = readPayload(service, bound.transactionId);
+
+    // The provider is told the outbound (pseudonymized) values; build a
+    // response that echoes the markers / scaled amounts verbatim so the
+    // reverse map is the only source of the real values.
+    const responseBody = JSON.stringify({
+      schemaVersion: "v1",
+      requestId: VALID_REQUEST_ID,
+      confidence: "high",
+      fields: {
+        invoiceNumber: outbound.fields.invoiceNumber,
+        invoiceDate: outbound.fields.invoiceDate,
+        taxLabel: outbound.fields.taxLabel,
+        subtotal: outbound.fields.totals.subtotal,
+        tax: outbound.fields.totals.tax,
+        total: outbound.fields.totals.total,
+      },
+      warnings: [],
+    });
+
+    const result = service.validateProviderResponse({
+      transactionId: bound.transactionId,
+      requestId: VALID_REQUEST_ID,
+      responseBytes: Buffer.from(responseBody, "utf8"),
+      contentType: PAYLOAD_MEDIA_TYPE,
+    });
+
+    assert.equal(result.requestId, VALID_REQUEST_ID);
+    assert.equal(result.confidence, "high");
+    assert.deepEqual(result.warnings, []);
+
+    // invoiceNumber was pseudonymized to a marker; the reversed value
+    // must come back from the per-transaction reverse map. We use
+    // reverseDeep (not reversePii) because the marker is embedded in a
+    // compound string like "NIF: [NIF-1]" — reversePii only recognizes
+    // the marker as a standalone token.
+    const tx = service._transactions.get(bound.transactionId);
+    const reversedInvoiceNumber = tx.pseudonymizer.reverseDeep(
+      outbound.fields.invoiceNumber,
+    );
+    assert.equal(result.fields.invoiceNumber, reversedInvoiceNumber);
+    assert.equal(result.fields.invoiceDate, outbound.fields.invoiceDate);
+    assert.equal(result.fields.taxLabel, outbound.fields.taxLabel);
+
+    // Amounts: the provider saw scaled values (e.g. "400.00") and the
+    // validator's reverseDeep turns them back into the originals the
+    // reverse map captured at prepare time.
+    for (const key of ["subtotal", "tax", "total"]) {
+      const fake = outbound.fields.totals[key];
+      const real = tx.pseudonymizer.reverseAmount(fake);
+      assert.equal(result.fields[key], real);
+    }
+  });
+
+  it("rejects a response whose content-type is not application/json", () => {
+    const { service, bound } = buildConsumed();
+    const body = JSON.stringify({
+      schemaVersion: "v1",
+      requestId: VALID_REQUEST_ID,
+      confidence: "high",
+      fields: { invoiceNumber: "[NIF-1]" },
+      warnings: [],
+    });
+    assert.throws(
+      () =>
+        service.validateProviderResponse({
+          transactionId: bound.transactionId,
+          requestId: VALID_REQUEST_ID,
+          responseBytes: Buffer.from(body, "utf8"),
+          contentType: "text/html",
+        }),
+      (err) =>
+        err instanceof PrivacyTransactionError &&
+        err.code === "provider_response_invalid" &&
+        /contentType/.test(err.message),
+    );
+  });
+
+  it("rejects a response body that exceeds RESPONSE_LIMIT_BYTES (1 MiB + 1)", () => {
+    const { service, bound } = buildConsumed();
+    // A non-JSON payload is fine here — the byte guard runs before the
+    // JSON parse, exactly like a provider streaming a runaway body.
+    const oversized = Buffer.alloc(RESPONSE_LIMIT_BYTES + 1, 0x41);
+    assert.throws(
+      () =>
+        service.validateProviderResponse({
+          transactionId: bound.transactionId,
+          requestId: VALID_REQUEST_ID,
+          responseBytes: oversized,
+          contentType: PAYLOAD_MEDIA_TYPE,
+        }),
+      (err) =>
+        err instanceof PrivacyTransactionError &&
+        err.code === "provider_response_invalid" &&
+        new RegExp(String(RESPONSE_LIMIT_BYTES)).test(err.message),
+    );
+  });
+
+  it("rejects a response body that is not valid JSON", () => {
+    const { service, bound } = buildConsumed();
+    assert.throws(
+      () =>
+        service.validateProviderResponse({
+          transactionId: bound.transactionId,
+          requestId: VALID_REQUEST_ID,
+          responseBytes: Buffer.from("<html>not json</html>", "utf8"),
+          contentType: PAYLOAD_MEDIA_TYPE,
+        }),
+      (err) =>
+        err instanceof PrivacyTransactionError &&
+        err.code === "provider_response_invalid" &&
+        /not valid JSON/.test(err.message),
+    );
+  });
+
+  it("rejects a response that carries raw PII the reverse map cannot explain (anti-hallucination)", () => {
+    // The default localExtraction has invoiceNumber "NIF: 12345678Z",
+    // which the prepare pseudonymizer turns into "[NIF-1]". The
+    // response below ignores the marker and returns a raw NIF that
+    // never appears in the reverse map — the only way the provider
+    // could "know" it is by leaking the document or hallucinating.
+    const { service, bound } = buildConsumed();
+    const responseBody = JSON.stringify({
+      schemaVersion: "v1",
+      requestId: VALID_REQUEST_ID,
+      confidence: "high",
+      fields: {
+        invoiceNumber: "12345678Z",
+        invoiceDate: "2026-01-15",
+      },
+      warnings: [],
+    });
+    assert.throws(
+      () =>
+        service.validateProviderResponse({
+          transactionId: bound.transactionId,
+          requestId: VALID_REQUEST_ID,
+          responseBytes: Buffer.from(responseBody, "utf8"),
+          contentType: PAYLOAD_MEDIA_TYPE,
+        }),
+      (err) =>
+        err instanceof PrivacyTransactionError &&
+        err.code === "provider_response_invalid" &&
+        /unmapped PII/.test(err.message),
+    );
+  });
+
+  it("rejects a response whose field names fall outside the bound allowlist", () => {
+    // matched=["invoiceNumber"] only — anything else (including the
+    // totals sub-keys) is outside the allowlist the provider was told
+    // about, so the response cannot add its own fields.
+    const { service, bound } = buildConsumed({
+      localExtraction: makeLocalExtraction({
+        invoice: {
+          invoiceNumber: "NIF: 12345678Z",
+          invoiceDate: null,
+          simplifiedInvoiceDate: null,
+          taxLabel: null,
+          totals: { subtotal: null, tax: null, total: null },
+          matched: ["invoiceNumber"],
+        },
+      }),
+    });
+    const responseBody = JSON.stringify({
+      schemaVersion: "v1",
+      requestId: VALID_REQUEST_ID,
+      confidence: "high",
+      fields: {
+        invoiceNumber: "[NIF-1]",
+        social_security_number: "123-45-6789",
+      },
+      warnings: [],
+    });
+    assert.throws(
+      () =>
+        service.validateProviderResponse({
+          transactionId: bound.transactionId,
+          requestId: VALID_REQUEST_ID,
+          responseBytes: Buffer.from(responseBody, "utf8"),
+          contentType: PAYLOAD_MEDIA_TYPE,
+        }),
+      (err) =>
+        err instanceof PrivacyTransactionError &&
+        err.code === "provider_response_invalid" &&
+        /social_security_number/.test(err.message),
+    );
   });
 });
