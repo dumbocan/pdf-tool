@@ -560,3 +560,30 @@ WU-1A3 and all later implementation rows remain deferred. Parent-owned lifecycle
 - **Constraints**: WU-5A1-RED requires real-shell E2E that fails because WebDriverIO/Tauri driver setup is absent. This requires Linux Tauri driver infrastructure not available in current environment — `tauri build --debug --no-bundle` fails with xfd exhaustion (cargo build succeeds).
 - **Line budget**: WU-5A1 ≤ 260 lines
 - **Hard stop**: Do not begin WU-5B1+ without WU-5A1 closure
+
+## Generation 24 — WU-5A1-TRIANGULATE completion
+
+- **WU-5A1-RED** (committed): test/e2e/smoke.e2e.test.js + wdio.conf.js — E2E harness
+  skeleton that fails because WebDriverIO/Tauri driver infra is absent.
+- **WU-5A1-TRIANGULATE** (committed): apps/nelupdf/test/tauri-binary-smoke.test.js (4 tests):
+  1. binary exists + executable
+  2. graceful SIGTERM cancellation (no orphan)
+  3. no TCP listener/HTTP server (Cargo.toml: no actix-web/rocket/axum/hyper)
+  4. opener absent + core:default only (capabilities/default.json)
+- **CI**: added `tauri-binary-smoke` job — `cargo build --bin nelupdf` bypasses the
+  tauri-cli watcher EMFILE crash (interface/rust.rs:146); see docs/tauri-build-workaround.md.
+- **tauri-binary-smoke workaround** (documented): `cargo run --bin nelupdf` / `cargo build --bin nelupdf`
+  produce a 207 MB ELF binary that launches as a single process; tauri-cli `build` crashes in this
+  env's fd namespace (notify watcher unwrap panic).
+- **WU-5A1-GREEN**: still blocked — real WebDriverIO + Tauri driver not available in this headless
+  Linux env (would need xvfb + tauri-driver + linux-release matrix per spec scenario 1).
+- **Status**: Slices 3-6 (full) + Slice 5 CSP/TRIANGULATE done. WU-5A1-RED and TRIANGULATE done.
+  GREEN remains infra-blocked; WU-5B1+ remain hard-stop until WU-5A1-GREEN.
+
+### Consolidation
+- Node: 247/247 ✅ (+4 TRIANGULATE + 5 WU-1G1 earlier this session)
+- Rust: 78/78 ✅
+- Frontend: 35/35 ✅
+- Typecheck: 0 errors ✅
+- Cargo build: nelupdf binary ✅
+- CI: 7 jobs (4 active, 3 pending — E2E/packaging/release)
