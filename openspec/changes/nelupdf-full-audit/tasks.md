@@ -309,7 +309,7 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 
 - [ ] `WU-1G1-RED` Run `pnpm --dir apps/nelupdf tauri info` and add CSP/config tests that fail on current `csp: null`; inventory installed APIs, schema, plugins, and lockfile versions. <!-- sdd-owner: implementation -->
 - [ ] `WU-1G1-GREEN` Set the minimum schema-valid production CSP/capabilities proven by `pnpm --dir apps/nelupdf tauri build --debug --no-bundle`; do not guess IPC sources. <!-- sdd-owner: implementation -->
-- [ ] `WU-1G1-TRIANGULATE` Runtime-test Tauri IPC success and blocked loopback/external fetch; test dev config separately and audit package/Cargo dependency changes. <!-- sdd-owner: implementation -->
+- [x] `WU-1G1-TRIANGULATE` Runtime-test Tauri IPC success and blocked loopback/external fetch; test dev config separately and audit package/Cargo dependency changes. <!-- sdd-owner: implementation -->
 - [ ] `WU-1G1-REFACTOR` Remove unused permissions/plugins only with evidence, run all config/build/visual/scope checks within 300 lines. <!-- sdd-owner: implementation -->
 
 ### WU-1G2 — Cross-runtime CI and offline boundary gate
@@ -390,10 +390,10 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 
 **Depends on:** WU-2C2. **Candidates:** `src/ocr-policy.js`, `test/ocr-policy.test.js`, Rust OCR traits/tests, bounded fixtures. **Acceptance:** no OCR exposure yet; tests encode max 25 pages, one job, 120s/document, 20s/subprocess, 256 MiB temporary output, 20 MiB/page, 80k retained chars, cleanup and cancellation; release owner may only lower without new review. **Rollback:** remove additive policy/harness; keep typed OCR unavailable.
 
-- [ ] `WU-2D1-RED` Add adversarial page/time/concurrency/temp/output/text/cancel tests before implementation. <!-- sdd-owner: implementation -->
-- [ ] `WU-2D1-GREEN` Implement testable policy/admission primitives while keeping product OCR disabled. <!-- sdd-owner: implementation -->
-- [ ] `WU-2D1-TRIANGULATE` Add exact-limit/over-limit and cleanup-on-every-terminal fixtures. <!-- sdd-owner: implementation -->
-- [ ] `WU-2D1-REFACTOR` Run no-network/internal/visual/scope gates within 360 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-2D1-RED` Add adversarial page/time/concurrency/temp/output/text/cancel tests before implementation. <!-- sdd-owner: implementation -->
+- [x] `WU-2D1-GREEN` Implement testable policy/admission primitives while keeping product OCR disabled. <!-- sdd-owner: implementation -->
+- [x] `WU-2D1-TRIANGULATE` Add exact-limit/over-limit and cleanup-on-every-terminal fixtures. <!-- sdd-owner: implementation -->
+- [x] `WU-2D1-REFACTOR` Run no-network/internal/visual/scope gates within 360 lines. <!-- sdd-owner: implementation -->
 
 ### WU-2D2 — Bounded OCR execution and end-to-end cancellation
 
@@ -428,37 +428,37 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 
 **Depends on:** WU-3A2 and expiry/disclosure decisions. **Candidates:** `src/privacy/transaction-service.js`, `transaction-store.js`, `disclosure.js`, tests. **Acceptance:** prepare binds document, exact payload hash/bytes, provider/model/purpose/policy/disclosure/expiry; disclosure states scope/sample limits/retention/training/destination facts; no provider call. **Rollback:** remove prepare/store; provider remains disabled.
 
-- [ ] `WU-3B1-RED` Add independent mutation and disclosure completeness tests before service code. <!-- sdd-owner: implementation -->
-- [ ] `WU-3B1-GREEN` Implement in-memory prepare/store with exact serialized bytes. <!-- sdd-owner: implementation -->
-- [ ] `WU-3B1-TRIANGULATE` Test changed document/payload/provider/model/purpose/policy/disclosure and expiry. <!-- sdd-owner: implementation -->
-- [ ] `WU-3B1-REFACTOR` Run privacy/no-egress/visual/scope gates within 390 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-3B1-RED` Add independent mutation and disclosure completeness tests before service code. <!-- sdd-owner: implementation -->
+- [x] `WU-3B1-GREEN` Implement in-memory prepare/store with exact serialized bytes. <!-- sdd-owner: implementation -->
+- [x] `WU-3B1-TRIANGULATE` Test changed document/payload/provider/model/purpose/policy/disclosure and expiry. <!-- sdd-owner: implementation -->
+- [x] `WU-3B1-REFACTOR` Run privacy/no-egress/visual/scope gates within 390 lines. <!-- sdd-owner: implementation -->
 
 ### WU-3B2 — Transaction lifetime and content-free audit sink
 
 **Depends on:** WU-3B1 and retention decision. **Candidates:** `transaction-store.js`, `audit-sink.js`, tests/docs. **Acceptance:** clear on expiry/cancel/clear/shutdown/terminal; bounded closed audit events; no content/path/key/map; user-clear semantics where approved. **Rollback:** use short in-memory no-durable-audit default.
 
-- [ ] `WU-3B2-RED` Add lifetime, cap, free-form rejection, and sensitive-marker tests. <!-- sdd-owner: implementation -->
-- [ ] `WU-3B2-GREEN` Implement minimal closed audit/lifetime behavior. <!-- sdd-owner: implementation -->
-- [ ] `WU-3B2-TRIANGULATE` Test every terminal path and diagnostic export. <!-- sdd-owner: implementation -->
-- [ ] `WU-3B2-REFACTOR` Run privacy/internal/visual/scope gates within 390 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-3B2-RED` Add lifetime, cap, free-form rejection, and sensitive-marker tests. <!-- sdd-owner: implementation -->
+- [x] `WU-3B2-GREEN` Implement minimal closed audit/lifetime behavior. <!-- sdd-owner: implementation -->
+- [x] `WU-3B2-TRIANGULATE` Test every terminal path and diagnostic export. <!-- sdd-owner: implementation -->
+- [x] `WU-3B2-REFACTOR` Run privacy/internal/visual/scope gates within 390 lines. <!-- sdd-owner: implementation -->
 
 ### WU-3C1 — Atomic single-use confirm and exact-byte handoff
 
 **Depends on:** WU-3B2. **Candidates:** `transaction-service.js`, `provider-adapter.js`, tests. **Acceptance:** atomic compare-and-consume; exact stored bytes only; replay/concurrent/direct/expired/modified confirm fails before egress; technical adapter remains disabled. **Rollback:** disable confirm/provider adapter while preserving local results.
 
-- [ ] `WU-3C1-RED` Add replay/concurrency/unpreviewed/mutation/captured-byte tests. <!-- sdd-owner: implementation -->
-- [ ] `WU-3C1-GREEN` Implement atomic consume and immutable bound request handoff. <!-- sdd-owner: implementation -->
-- [ ] `WU-3C1-TRIANGULATE` Test provider timeout/redirect/content-type/size failures without local-result mutation. <!-- sdd-owner: implementation -->
-- [ ] `WU-3C1-REFACTOR` Run privacy/no-egress/visual/scope gates within 350 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-3C1-RED` Add replay/concurrency/unpreviewed/mutation/captured-byte tests. <!-- sdd-owner: implementation -->
+- [x] `WU-3C1-GREEN` Implement atomic consume and immutable bound request handoff. <!-- sdd-owner: implementation -->
+- [x] `WU-3C1-TRIANGULATE` Test provider timeout/redirect/content-type/size failures without local-result mutation. <!-- sdd-owner: implementation -->
+- [x] `WU-3C1-REFACTOR` Run privacy/no-egress/visual/scope gates within 350 lines. <!-- sdd-owner: implementation -->
 
 ### WU-3C2 — Provider response validation and exact reverse map
 
 **Depends on:** WU-3C1. **Candidates:** `src/privacy/provider-response.js`, `reverse-map.js`, tests. **Acceptance:** byte/content/schema/value bounds; exact map membership only; unmapped numbers/IDs unchanged; untrusted text never HTML/path/shell/formula; local result immutable. **Rollback:** discard provider overlay and retain deterministic result.
 
-- [ ] `WU-3C2-RED` Add malformed/oversized/adversarial/unmapped/heuristic-reversal tests. <!-- sdd-owner: implementation -->
-- [ ] `WU-3C2-GREEN` Implement closed response and exact reverse-map logic. <!-- sdd-owner: implementation -->
-- [ ] `WU-3C2-TRIANGULATE` Test collisions, international numbers, unsafe strings, and invalid-output local fallback. <!-- sdd-owner: implementation -->
-- [ ] `WU-3C2-REFACTOR` Run privacy/internal/visual/scope gates and split before 400 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-3C2-RED` Add malformed/oversized/adversarial/unmapped/heuristic-reversal tests. <!-- sdd-owner: implementation -->
+- [x] `WU-3C2-GREEN` Implement closed response and exact reverse-map logic. <!-- sdd-owner: implementation -->
+- [x] `WU-3C2-TRIANGULATE` Test collisions, international numbers, unsafe strings, and invalid-output local fallback. <!-- sdd-owner: implementation -->
+- [x] `WU-3C2-REFACTOR` Run privacy/internal/visual/scope gates and split before 400 lines. <!-- sdd-owner: implementation -->
 
 ### WU-3D1 — CLI/HTTP/MCP unified privacy adapters
 
@@ -484,37 +484,37 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 
 **Depends on:** Slices 2–3. **Candidates:** frontend reducer/hook/components, Rust document/transaction stores, tests. **Acceptance:** duplicate basenames remain distinct; actions target `DocumentId`; remove/clear releases bytes/results/maps/capabilities and suppresses late responses. **Rollback:** retain prior safe opaque-ID state and disable incomplete actions.
 
-- [ ] `WU-4A1-RED` Add duplicate/action/lifetime/late-response tests. <!-- sdd-owner: implementation -->
-- [ ] `WU-4A1-GREEN` Implement identity-based actions and clear semantics. <!-- sdd-owner: implementation -->
-- [ ] `WU-4A1-TRIANGULATE` Test same names, reorder, partial/provider states, cancel, and session clear. <!-- sdd-owner: implementation -->
-- [ ] `WU-4A1-REFACTOR` Run component/a11y/visual/internal/scope gates within 340 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-4A1-RED` Add duplicate/action/lifetime/late-response tests. <!-- sdd-owner: implementation -->
+- [x] `WU-4A1-GREEN` Implement identity-based actions and clear semantics. <!-- sdd-owner: implementation -->
+- [x] `WU-4A1-TRIANGULATE` Test same names, reorder, partial/provider states, cancel, and session clear. <!-- sdd-owner: implementation -->
+- [x] `WU-4A1-REFACTOR` Run component/a11y/visual/internal/scope gates within 340 lines. <!-- sdd-owner: implementation -->
 
 ### WU-4A2 — Explicit retention copy and state policy
 
 **Depends on:** WU-4A1. **Candidates:** local help/privacy docs, reviewed UI copy, retention tests. **Acceptance:** actual memory/log lifetime and best-effort clearing are truthful; no physical-erasure overclaim. **Rollback:** restore prior truthful minimal copy; never claim more than verified.
 
-- [ ] `WU-4A2-RED` Add claim-to-runtime checks for each retained data class. <!-- sdd-owner: implementation -->
-- [ ] `WU-4A2-GREEN` Add reviewed copy/docs matching runtime behavior. <!-- sdd-owner: implementation -->
-- [ ] `WU-4A2-TRIANGULATE` Test clear/failure/cancel/exit copy against evidence. <!-- sdd-owner: implementation -->
-- [ ] `WU-4A2-REFACTOR` Run docs/component/visual/scope gates within 280 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-4A2-RED` Add claim-to-runtime checks for each retained data class. <!-- sdd-owner: implementation -->
+- [x] `WU-4A2-GREEN` Add reviewed copy/docs matching runtime behavior. <!-- sdd-owner: implementation -->
+- [x] `WU-4A2-TRIANGULATE` Test clear/failure/cancel/exit copy against evidence. <!-- sdd-owner: implementation -->
+- [x] `WU-4A2-REFACTOR` Run docs/component/visual/scope gates within 280 lines. <!-- sdd-owner: implementation -->
 
 ### WU-4B1 — RFC 4180 and spreadsheet-safe CSV encoder
 
 **Depends on:** WU-4A1. **Candidates:** `apps/nelupdf/src/features/export/csv.ts`, tests, `App.tsx`. **Acceptance:** doubled quotes, delimiter/newline quoting, formula neutralization after first meaningful character, control policy, partial provenance, duplicate-safe selection. **Rollback:** disable export rather than restore unsafe encoder.
 
-- [ ] `WU-4B1-RED` Add spreadsheet-oriented malicious/quotes/newline/control/duplicate/partial fixtures. <!-- sdd-owner: implementation -->
-- [ ] `WU-4B1-GREEN` Implement a pure bounded encoder and wire export. <!-- sdd-owner: implementation -->
-- [ ] `WU-4B1-TRIANGULATE` Round-trip supported fixtures and verify no formula execution by default. <!-- sdd-owner: implementation -->
-- [ ] `WU-4B1-REFACTOR` Run frontend/a11y/visual/scope gates within 390 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-4B1-RED` Add spreadsheet-oriented malicious/quotes/newline/control/duplicate/partial fixtures. <!-- sdd-owner: implementation -->
+- [x] `WU-4B1-GREEN` Implement a pure bounded encoder and wire export. <!-- sdd-owner: implementation -->
+- [x] `WU-4B1-TRIANGULATE` Round-trip supported fixtures and verify no formula execution by default. <!-- sdd-owner: implementation -->
+- [x] `WU-4B1-REFACTOR` Run frontend/a11y/visual/scope gates within 390 lines. <!-- sdd-owner: implementation -->
 
 ### WU-4C1 — Typed recovery and complete keyboard/status semantics
 
 **Depends on:** WU-4A1 and Slice 3 UI. **Candidates:** extraction/privacy components, message map, CSS, tests. **Acceptance:** actionable safe guidance for all typed states; deliberate retry/new transaction; keyboard, focus, status, non-color semantics. **Rollback:** preserve typed states and hide unsafe/incomplete actions.
 
-- [ ] `WU-4C1-RED` Add user-event/a11y tests for every recovery state and modal lifecycle. <!-- sdd-owner: implementation -->
-- [ ] `WU-4C1-GREEN` Implement reviewed typed actions and semantics. <!-- sdd-owner: implementation -->
-- [ ] `WU-4C1-TRIANGULATE` Test retry categories, provider failure after local success, Escape/focus restoration, and announcements. <!-- sdd-owner: implementation -->
-- [ ] `WU-4C1-REFACTOR` Run full component/a11y/targeted visual/scope gates within 360 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-4C1-RED` Add user-event/a11y tests for every recovery state and modal lifecycle. <!-- sdd-owner: implementation -->
+- [x] `WU-4C1-GREEN` Implement reviewed typed actions and semantics. <!-- sdd-owner: implementation -->
+- [x] `WU-4C1-TRIANGULATE` Test retry categories, provider failure after local success, Escape/focus restoration, and announcements. <!-- sdd-owner: implementation -->
+- [x] `WU-4C1-REFACTOR` Run full component/a11y/targeted visual/scope gates within 360 lines. <!-- sdd-owner: implementation -->
 
 ### WU-4C2 — Responsive/text-scaling visual matrix
 
@@ -569,7 +569,7 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 
 - [ ] `WU-5B2-RED` Add final package CSP/capability negative tests and installed-schema validation. <!-- sdd-owner: implementation -->
 - [ ] `WU-5B2-GREEN` Tighten only against proven final requirements. <!-- sdd-owner: implementation -->
-- [ ] `WU-5B2-TRIANGULATE` Runtime-test blocked destinations, allowed IPC, plugin denial, and local extraction. <!-- sdd-owner: implementation -->
+- [x] `WU-5B2-TRIANGULATE` Runtime-test blocked destinations, allowed IPC, plugin denial, and local extraction. <!-- sdd-owner: implementation -->
 - [ ] `WU-5B2-REFACTOR` Run Tauri build/E2E/visual/security/scope gates within 340 lines. <!-- sdd-owner: implementation -->
 
 ### WU-5C1 — Artifact integrity, provenance, and manual install path
@@ -614,10 +614,10 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 
 **Depends on:** Slices 3 and 5 accepted. **Candidates:** `src/privacy/provider-registry.js`, evidence schema/tests, release config docs. **Acceptance:** stable provider/model/account/purpose/package/jurisdiction keys; dated retention/training/security/processor/transfer facts; missing/stale/materially changed evidence disables; no provider enabled. **Rollback:** empty registry/disabled providers.
 
-- [ ] `WU-6A1-RED` Add absent/stale/mismatch/material-change enablement tests. <!-- sdd-owner: implementation -->
-- [ ] `WU-6A1-GREEN` Implement the closed registry and disabled default. <!-- sdd-owner: implementation -->
-- [ ] `WU-6A1-TRIANGULATE` Test account/model/purpose/package/user/jurisdiction scope independently. <!-- sdd-owner: implementation -->
-- [ ] `WU-6A1-REFACTOR` Run privacy/release/visual/scope gates within 280 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-6A1-RED` Add absent/stale/mismatch/material-change enablement tests. <!-- sdd-owner: implementation -->
+- [x] `WU-6A1-GREEN` Implement the closed registry and disabled default. <!-- sdd-owner: implementation -->
+- [x] `WU-6A1-TRIANGULATE` Test account/model/purpose/package/user/jurisdiction scope independently. <!-- sdd-owner: implementation -->
+- [x] `WU-6A1-REFACTOR` Run privacy/release/visual/scope gates within 280 lines. <!-- sdd-owner: implementation -->
 
 ### WU-6B1 — Qualified provider/legal/security review gate
 
