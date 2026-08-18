@@ -16,7 +16,7 @@ import type {
   Template,
 } from "./lib/types";
 import { uuidv4 } from "./lib/uuid";
-import { csvCell, encodeCsv } from "./features/export/csv.ts";
+import { encodeCsv } from "./features/export/csv.ts";
 
 type ExtractionState =
   | "idle"
@@ -509,7 +509,7 @@ const CSV_COLUMNS = [
   "tax",
   "total",
   "taxLabel",
-] as const;
+] as string[];
 
 function exportCsv(rows: Row[]) {
   const csv = encodeCsv(rows, CSV_COLUMNS);
@@ -702,8 +702,9 @@ function retryAction(retry: RetryCategory, file: string): (() => void) | null {
   if (!label) return null;
   return () => {
     // Deliberate retry triggers the file-selection dialog again so the user
-    // chooses what to retry — we never auto-re-extract a previously failed row.
+    // can re-select the file. We never auto-re-extract — the user must choose.
     const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    void file; // reserved for per-file retry UX in WU-2D
     input?.click();
   };
 }
