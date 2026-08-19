@@ -1,0 +1,37 @@
+name: NeluPDF Release Artifact Manifest
+schema_version: 1.0
+release_tag: ""
+release_channel: stable
+# Each artifact must declare: name, path, sha256, integrity_algorithm
+# Verification: sha256sum -c manifest.sha256 before execution.
+# This template is the WU-5C1-GREEN artifact metadata — pinned identity
+# verified before any privileged install step. Mutable remote scripts are
+# NEVER the sole installer; this manifest is signed in production via
+# the WU-5C2 signing policy (updates off until WU-5C2-GREEN).
+artifacts:
+  - name: nelupdf-x86_64.AppImage
+    digest:
+      algorithm: sha256
+      value: TBD
+    verification: sha256sum -c
+  - name: nelupdf-1.0.0-x86_64.deb
+    digest:
+      algorithm: sha256
+      value: TBD
+    verification: sha256sum -c
+  - name: nelupdf-binary
+    description: Rust shell binary (produced by cargo build --bin nelupdf)
+    digest:
+      algorithm: sha256
+      value: TBD
+    verification: sha256sum -c
+  - name: engine-stdio.js
+    description: Node sidecar (bundled via tauri.conf bundle.resources)
+    digest:
+      algorithm: sha256
+      value: TODO
+    verification: sha256sum -c
+# Install path MUST be via package manager or AppImage — never a mutable
+# curl|sh pipe. Verification gates:
+verify_before_install: true
+mutable_script_installer: false
