@@ -577,8 +577,8 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 **Depends on:** WU-5B2. **Candidates:** release workflow/scripts, checksum/signature metadata, installation docs/tests. **Acceptance:** pinned artifact identity and verification before execution; mutable script not sole installer; failed verification blocks; automatic updates remain off. **Rollback:** withdraw artifact and retain verified prior release.
 
 - [x] `WU-5C1-RED` Add tampered/missing/provenance/install verification tests. <!-- sdd-owner: implementation -->
-- [ ] `WU-5C1-GREEN` Produce verifiable candidate metadata and manual install instructions. <!-- sdd-owner: implementation -->
-- [ ] `WU-5C1-TRIANGULATE` Verify clean download/check/install/first launch on the matrix entry. <!-- sdd-owner: implementation -->
+- [x] `WU-5C1-GREEN` Produce verifiable candidate metadata and manual install instructions. <!-- sdd-owner: implementation -->
+- [x] `WU-5C1-TRIANGULATE` Verify clean download/check/install/first launch on the matrix entry. <!-- sdd-owner: implementation -->
 - [ ] `WU-5C1-REFACTOR` Run release-doc/E2E/visual/scope gates within 300 lines. <!-- sdd-owner: implementation -->
 
 ### WU-5C2 — Signing/update/downgrade policy and fail-closed updater
