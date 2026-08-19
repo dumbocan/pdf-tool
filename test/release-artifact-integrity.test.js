@@ -137,3 +137,31 @@ test("WU-5C1-GREEN: manifest hashes match actual artifact digests", async () => 
   assert.equal(failures, 0,
     "published checksums must verify against current artifacts: " + result.trim());
 });
+
+// WU-5C1-REFACTOR: release-doc / scope / no-mutable-script gates within budget.
+test("WU-5C1-REFACTOR: manifest documents manual install path (no mutable script)", () => {
+  const text = fs.readFileSync(MANIFEST_REAL, "utf8");
+  assert.equal(/verify_before_install: true/.test(text), true,
+    "manifest must gate install on verification before privileged actions");
+  assert.equal(/mutable_script_installer: false/.test(text), true,
+    "manifest must forbid mutable-script-only installer");
+  // Must mention a real install mechanism (AppImage/package manager), not curl|sh.
+  assert.ok(/AppImage|dpkg|package manager/.test(text) || /manual install/i.test(text),
+    "manifest must document a pinned manual install path");
+  assert.equal(/curl.*\|.*sh|wget.*\|.*bash/.test(text), false,
+    "must not document a curl|sh remote script installer");
+});
+
+test("WU-5C1-REFACTOR: support-matrix doc matches manifest artifacts", () => {
+  // Scope gate: the support matrix doc must not claim artifacts the manifest
+  // doesn't declare (truth-first consistency).
+  const matrix = fs.readFileSync(path.join(REPO_ROOT, "docs", "support-matrix.md"), "utf8");
+  const manifest = fs.readFileSync(MANIFEST_REAL, "utf8");
+  // Support matrix mentions the binary + engine — same artifacts as manifest.
+  assert.ok(/nelupdf|engine-stdio\.js/.test(matrix),
+    "support-matrix must reference the declared artifacts");
+  assert.equal(manifest.includes("nelupdf-binary"), true,
+    "manifest must declare nelupdf-binary");
+  assert.equal(manifest.includes("engine-stdio.js"), true,
+    "manifest must declare engine-stdio.js");
+});
