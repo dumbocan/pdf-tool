@@ -92,3 +92,48 @@ test("WU-5C1-RED: verification path is documented (sha256sum -c)", () => {
   assert.ok(verificationCount >= 2,
     "at least 2 artifacts must document sha256sum -c verification path");
 });
+
+// WU-5C1-GREEN: verifiable artifact identity — real sha256 hashes pinned + checkable.
+const CHECKSUMS = path.join(REPO_ROOT, "docs", "release-artifact-checksums.sha256");
+const MANIFEST_REAL = path.join(REPO_ROOT, "docs", "release-artifact-manifest.yaml");
+
+test("WU-5C1-GREEN: manifest with real sha256 hashes exists", () => {
+  assert.ok(fs.existsSync(MANIFEST_REAL),
+    "docs/release-artifact-manifest.yaml (GREEN) must exist with real hashes");
+  const text = fs.readFileSync(MANIFEST_REAL, "utf8");
+  // No TBD/TODO — must be real 64-hex sha256.
+  assert.equal(/TBD|TODO/.test(text), false,
+    "GREEN manifest must have no TBD/TODO — all digests pinned");
+  assert.ok(/"value":\s*[0-9a-f]{64}/.test(text) || /value:\s*[0-9a-f]{64}/.test(text),
+    "at least one artifact must have a real 64-hex sha256 value");
+});
+
+test("WU-5C1-GREEN: checksum file passes sha256sum -c verification", () => {
+  assert.ok(fs.existsSync(CHECKSUMS), "docs/release-artifact-checksums.sha256 must exist");
+  const text = fs.readFileSync(CHECKSUMS, "utf8");
+  // Format: "<sha256>  <path>" per artifact.
+  const lines = text.trim().split(/\r?\n/).filter((l) => l.trim());
+  assert.ok(lines.length >= 2, "must declare at least 2 checksums (binary + engine)");
+  for (const line of lines) {
+    const m = line.match(/^([0-9a-f]{64})\s+\*?(.+)$/);
+    assert.ok(m, `malformed checksum line: ${line}`);
+    assert.ok(fs.existsSync(path.join(REPO_ROOT, m[2])),
+      `referenced artifact must exist: ${m[2]}`);
+  }
+});
+
+test("WU-5C1-GREEN: manifest hashes match actual artifact digests", async () => {
+  if (!fs.existsSync(CHECKSUMS)) {
+    assert.ok(false, "GREEN checksums file must exist for hash verification");
+    return;
+  }
+  const { execSync } = await import("node:child_process");
+  const result = execSync(
+    `sha256sum -c docs/release-artifact-checksums.sha256`,
+    { cwd: REPO_ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+  );
+  // sha256sum -c prints one result line per artifact; none must be FAILED.
+  const failures = (result.match(/FAILED/g) || []).length;
+  assert.equal(failures, 0,
+    "published checksums must verify against current artifacts: " + result.trim());
+});

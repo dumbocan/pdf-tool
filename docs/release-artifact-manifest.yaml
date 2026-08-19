@@ -1,0 +1,31 @@
+name: NeluPDF Release Artifact Manifest
+schema_version: 1.0
+release_tag: wu1.0.0-draft
+release_channel: stable
+
+# WU-5C1-GREEN: Verifiable artifact identity for the nelupdf full-audit release.
+# Each sha256 was computed from the actual build artifact:
+#   sha256sum apps/nelupdf/src-tauri/target/debug/nelupdf
+#   sha256sum src/engine-stdio.js
+#
+# Verification before install (spec §60, scenario 2):
+#   sha256sum -c docs/release-artifact-checksums.sha256
+#
+# Updates remain OFF until WU-5C2-GREEN (signing policy).
+# Mutable remote scripts MUST NOT be the sole installer — install via AppImage
+# or distro package manager only.
+artifacts:
+  - name: nelupdf-binary
+    description: Rust Tauri shell binary (cargo build --bin nelupdf)
+    digest:
+      algorithm: sha256
+      value: d52334f266c891985af10f63aa06485cd3598f6e788c8c84314c9d43e75f3126
+    verification: sha256sum -c
+  - name: engine-stdio.js
+    description: Node sidecar (bundled via tauri.conf bundle.resources)
+    digest:
+      algorithm: sha256
+      value: dff9c27d4de78816049d68d545e70a6974756a354ccb7e195e3aa54da7744395
+    verification: sha256sum -c
+verify_before_install: true
+mutable_script_installer: false
