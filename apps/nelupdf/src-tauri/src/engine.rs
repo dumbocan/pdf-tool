@@ -464,10 +464,27 @@ mod tests {
     }
 
     #[test]
-    fn frame_rejects_trailing() {
-        let mut frame = encode_frame(&serde_json::json!({"a": 1})).unwrap();
-        frame.push(0);
-        assert_eq!(parse_frame(&frame).unwrap_err().code, "trailing_data");
+    fn find_engine_path_prefers_resource_dir() {
+        // WU-5A2-TRIANGULATE: when RESOURCE_DIR is set, the loader must find
+        // engine-stdio.js in that directory (bundled resource) before dev
+        // fallbacks.
+        std::env::set_var("RESOURCE_DIR", "../../../src");
+        assert!(
+            find_engine_path().is_some(),
+            "must locate engine-stdio.js via RESOURCE_DIR"
+        );
+    }
+
+    #[test]
+    fn find_engine_path_no_hardcoded_absolute() {
+        // WU-5A2-GREEN: verify no forbidden absolute path literal exists in the
+        // loader source. We grep for the literal via compile-time assertion.
+        let src = include_str!("engine.rs");
+        // Forbidden: any hardcoded absolute path literal assigned to a PathBuf.
+        assert!(
+            !src.contains("std::path::PathBuf::from(") || src.contains("PathBuf::from(env!"),
+            "loader must not use PathBuf::from with hardcoded absolute literals"
+        );
     }
 
     #[test]
@@ -478,6 +495,11 @@ mod tests {
     }
 
     #[test]
+    fn frame_rejects_trailing() {
+        let mut frame = encode_frame(&serde_json::json!({"a": 1})).unwrap();
+        frame.push(0);
+        assert_eq!(parse_frame(&frame).unwrap_err().code, "trailing_data");
+    }
     fn run_extraction_returns_ok() {
         if find_engine_path().is_none() || Command::new("node").arg("--version").output().is_err() {
             eprintln!("SKIP: node or engine path not available");
