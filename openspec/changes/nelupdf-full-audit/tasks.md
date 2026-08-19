@@ -579,7 +579,7 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 - [x] `WU-5C1-RED` Add tampered/missing/provenance/install verification tests. <!-- sdd-owner: implementation -->
 - [x] `WU-5C1-GREEN` Produce verifiable candidate metadata and manual install instructions. <!-- sdd-owner: implementation -->
 - [x] `WU-5C1-TRIANGULATE` Verify clean download/check/install/first launch on the matrix entry. <!-- sdd-owner: implementation -->
-- [ ] `WU-5C1-REFACTOR` Run release-doc/E2E/visual/scope gates within 300 lines. <!-- sdd-owner: implementation -->
+- [x] `WU-5C1-REFACTOR` Run release-doc/E2E/visual/scope gates within 300 lines. <!-- sdd-owner: implementation -->
 
 ### WU-5C2 — Signing/update/downgrade policy and fail-closed updater
 
