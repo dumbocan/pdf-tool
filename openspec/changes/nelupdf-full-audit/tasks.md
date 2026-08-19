@@ -594,7 +594,7 @@ Correction note: fixture-only keyboard evidence is superseded. Current WU-1A1 pr
 
 **Depends on:** WU-5C2. **Candidates:** release CI matrix, package smoke scripts, rollback fixtures/docs. **Acceptance:** each supported entry proves integrity, install, trusted engine, local extraction, shutdown, upgrade, rollback, source-PDF preservation; unsupported entries not claimed. **Rollback:** block promotion for failing entries and retain prior artifact.
 
-- [ ] `WU-5D1-RED` Add matrix assertions that fail for each missing lifecycle/rollback proof. <!-- sdd-owner: implementation -->
+- [x] `WU-5D1-RED` Add matrix assertions that fail for each missing lifecycle/rollback proof. <!-- sdd-owner: implementation -->
 - [ ] `WU-5D1-GREEN` Wire controlled package smoke for every declared entry. <!-- sdd-owner: implementation -->
 - [ ] `WU-5D1-TRIANGULATE` Test failed engine start, interrupted upgrade, rollback, no direct HTTP/raw LLM restoration. <!-- sdd-owner: implementation -->
 - [ ] `WU-5D1-REFACTOR` Run complete matrix/evidence/scope gates within 360 lines. <!-- sdd-owner: implementation -->
