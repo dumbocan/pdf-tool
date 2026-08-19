@@ -13,8 +13,10 @@ import path from "node:path";
 import test from "node:test";
 
 // Tests live at apps/nelupdf/test/ → APP_ROOT = apps/nelupdf
+// REPO_ROOT = /home/jmon/.pdf-tool-wu1a1 (four levels up from test dir).
 const APP_ROOT = path.resolve(import.meta.dirname, "..");
 const TAURI_DIR = path.join(APP_ROOT, "src-tauri");
+const REPO_ROOT = path.resolve(APP_ROOT, "..", "..");
 const ENGINE_RS = path.join(TAURI_DIR, "src/engine.rs");
 const TAURI_CONF = path.join(TAURI_DIR, "tauri.conf.json");
 
@@ -62,7 +64,7 @@ test("WU-5A2-TRIANGULATE: hardcoded absolute path removed from loader", () => {
 
 // WU-5A2-REFACTOR: dependency/license/scope gates
 const CARGO_TOML = path.join(TAURI_DIR, "Cargo.toml");
-const ENGINE_JS = path.resolve(import.meta.dirname, "..", "..", "..", "src/engine-stdio.js");
+const ENGINE_JS = path.join(REPO_ROOT, "src", "engine-stdio.js");
 
 test("WU-5A2-REFACTOR: Cargo.toml declares an OSI license", () => {
   const cargo = fs.readFileSync(CARGO_TOML, "utf8");
@@ -84,4 +86,27 @@ test("WU-5A2-REFACTOR: engine-stdio.js uses only stdlib + local imports", () => 
   });
   assert.equal(nonStdlib.length, 0,
     "engine-stdio.js must not import external packages: " + JSON.stringify(nonStdlib));
+});
+
+// WU-5D1-DRAFT: support matrix claim truth gate
+const MATRIX_DOC = path.join(REPO_ROOT, "docs", "support-matrix.md");
+
+test("WU-5D1-DRAFT: support-matrix doc exists and lists one qualified entry", () => {
+  const doc = fs.readFileSync(MATRIX_DOC, "utf8");
+  // The doc MUST list a qualified matrix, not make unsupported claims.
+  assert.ok(/Qualified support matrix/.test(doc),
+    "matrix doc must have a 'Qualified support matrix' section");
+  // Must NOT claim Windows/macOS support (per spec).
+  assert.equal(/macOS|Windows/.test(doc) && /are NOT supported/.test(doc), true,
+    "matrix doc must list macOS/Windows as unsupported");
+});
+
+test("WU-5D1-DRAFT: matrix claims match implementation (no HTTP server, no OCR)", () => {
+  const doc = fs.readFileSync(MATRIX_DOC, "utf8");
+  // The code uses a stdio subprocess (not HTTP server) — claim must be accurate.
+  assert.ok(/stdio subprocess|Command::new\("node"\)/.test(doc) || /std spawn/.test(doc),
+    "matrix must not claim a network server architecture");
+  // OCR must remain "none" in this release (no Tesseract bundled).
+  assert.ok(/None in this release|no OCR engine/.test(doc),
+    "matrix must truthfully report OCR as none");
 });
