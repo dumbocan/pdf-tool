@@ -1,0 +1,31 @@
+{
+  "syntheticEvidenceSchemaVersion": "1",
+  "entries": [
+    {
+      "entryId": "synthetic.same-layout.first",
+      "kind": "SYNTHETIC",
+      "fixturePath": "fixtures/invoice-learning/synthetic.same-layout.first.pdf",
+      "pdfSha256": "dfa6637854c9b70bdb1e053e2d4c2e22d97452dde8b23b0915d467a154162260",
+      "pageCount": 2,
+      "currency": "EUR",
+      "layoutVersion": "A3-LAYOUT-V1",
+      "requiredFieldList": ["supplier","invoiceNumber","invoiceDate","currency","taxableBase","taxes","total"],
+      "expectedRowCount": 3,
+      "repeatedHeaderCoverage": "ALL_CONTINUATION_PAGES",
+      "safeVisualMetadata": {"page":1,"zoomBps":100,"viewportWidth":1280,"viewportHeight":800,"workflow":"REVIEW_OVERLAY_AND_REPLAY","containsSensitiveContent":false}
+    },
+    {
+      "entryId": "synthetic.same-layout.second",
+      "kind": "SYNTHETIC",
+      "fixturePath": "fixtures/invoice-learning/synthetic.same-layout.second.pdf",
+      "pdfSha256": "89fc51ae2e874ab46450fc14ce1d1110ccf68b496d13eaa06a8ba95e8d68d7fa",
+      "pageCount": 2,
+      "currency": "EUR",
+      "layoutVersion": "A3-LAYOUT-V1",
+      "requiredFieldList": ["supplier","invoiceNumber","invoiceDate","currency","taxableBase","taxes","total"],
+      "expectedRowCount": 3,
+      "repeatedHeaderCoverage": "ALL_CONTINUATION_PAGES",
+      "safeVisualMetadata": {"page":1,"zoomBps":100,"viewportWidth":1280,"viewportHeight":800,"workflow":"REVIEW_OVERLAY_AND_REPLAY","containsSensitiveContent":false}
+    }
+  ]
+}
