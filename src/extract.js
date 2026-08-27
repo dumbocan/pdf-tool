@@ -856,5 +856,8 @@ export async function extractTextFromPdf(buffer, options = {}) {
         truncationReason,
         applied: { maxPages, maxChars },
         invoiceFields,
+        // Preserve bounded positional lines for learned-loop evidence. This is
+        // additive to the legacy extraction result and remains local/untrusted.
+        pageLines: lines,
       };
     }
