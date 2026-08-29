@@ -20,6 +20,7 @@ export function assertJcsInput(value, seen = new Set()) {
   seen.delete(value); return value;
 }
 export function canonicalizeJcs(value) { assertJcsInput(value); const result = canonicalize(value); if (typeof result !== "string") reject("NON_I_JSON", "Canonicalization produced no JSON"); return result; }
-export function hashJcs(value) { return createHash("sha256").update(Buffer.from(canonicalizeJcs(value), "utf8")).digest("hex"); }
+export function canonicalizeJcsBytes(value) { return Buffer.from(canonicalizeJcs(value), "utf8"); }
+export function hashJcs(value) { return createHash("sha256").update(canonicalizeJcsBytes(value)).digest("hex"); }
 export const canonicalizeJson = canonicalizeJcs;
 export const sha256Jcs = hashJcs;
