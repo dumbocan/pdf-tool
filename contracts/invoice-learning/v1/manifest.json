@@ -1,1 +1,654 @@
-{"manifestSchemaVersion":"1","capability":"invoice_learning_v1","protocolVersion":1,"schemaVersions":{"invoiceEvidence":"1","template":"1","executionPolicy":"1","projection":"1","proposalResponse":"1"},"negotiation":{"requestAlias":"NegotiateRequestV1","successAlias":"NegotiateSuccessV1","errorAlias":"NegotiateErrorV1"},"operations":[{"kind":"extractInvoiceV1","requestAlias":"ExtractInvoiceRequestV1","responseAlias":"ExtractInvoiceResponseV1"},{"kind":"replayTemplateV1","requestAlias":"ReplayTemplateRequestV1","responseAlias":"ReplayTemplateResponseV1"},{"kind":"renderPageV1","requestAlias":"RenderPageRequestV1","responseAlias":"RenderPageResponseV1"},{"kind":"proposalPrepareV1","requestAlias":"ProposalPrepareRequestV1","responseAlias":"ProposalPrepareResponseV1"},{"kind":"proposalSubmitV1","requestAlias":"ProposalSubmitRequestV1","responseAlias":"ProposalSubmitResponseV1"},{"kind":"proposalCancelV1","requestAlias":"ProposalCancelRequestV1","responseAlias":"ProposalCancelResponseV1"}],"schemas":[{"name":"invoiceEvidence","path":"invoice-learning.schema.json","sha256":"a77d217950a4e8ce70233d6066ed7d69aef25a535841bb479700b461845a413d"},{"name":"template","path":"template.schema.json","sha256":"62d18797267c2929c65f9b5d56caf2491e8ece908bcba6cfb16326221461629b"},{"name":"proposal","path":"proposal.schema.json","sha256":"155d55f6374157f95c2f2e79239035bc0d4211d541a24494772e7e0a725024d7"},{"name":"operations","path":"operations.schema.json","sha256":"cb1b91c6796d0898251539a928e87f85c22be6d2dbb66201a3b731d4fed9fc5c"},{"name":"corpus","path":"corpus-manifest.json","sha256":"47c7388fdb82e8d24848e227f08922a102d1c517b81547b19175e14705049ef9"}],"aliases":[{"alias":"AsciiTokenV1","source":"invoice-learning.schema.json","pointer":"#/$defs/AsciiTokenV1"},{"alias":"Sha256V1","source":"invoice-learning.schema.json","pointer":"#/$defs/Sha256V1"},{"alias":"RequestIdV1","source":"invoice-learning.schema.json","pointer":"#/$defs/RequestIdV1"},{"alias":"DocumentIdV1","source":"invoice-learning.schema.json","pointer":"#/$defs/DocumentIdV1"},{"alias":"TokenIdV1","source":"invoice-learning.schema.json","pointer":"#/$defs/TokenIdV1"},{"alias":"GroupIdV1","source":"invoice-learning.schema.json","pointer":"#/$defs/GroupIdV1"},{"alias":"AnchorIdV1","source":"invoice-learning.schema.json","pointer":"#/$defs/AnchorIdV1"},{"alias":"EvidenceIdV1","source":"invoice-learning.schema.json","pointer":"#/$defs/EvidenceIdV1"},{"alias":"SupplierCandidateIdV1","source":"invoice-learning.schema.json","pointer":"#/$defs/SupplierCandidateIdV1"},{"alias":"MatchingKeyV1","source":"invoice-learning.schema.json","pointer":"#/$defs/MatchingKeyV1"},{"alias":"ActionIdV1","source":"invoice-learning.schema.json","pointer":"#/$defs/ActionIdV1"},{"alias":"TransactionIdV1","source":"invoice-learning.schema.json","pointer":"#/$defs/TransactionIdV1"},{"alias":"PolicyIdV1","source":"invoice-learning.schema.json","pointer":"#/$defs/PolicyIdV1"},{"alias":"TimestampV1","source":"invoice-learning.schema.json","pointer":"#/$defs/TimestampV1"},{"alias":"MoneyV1","source":"invoice-learning.schema.json","pointer":"#/$defs/MoneyV1"},{"alias":"QuantityV1","source":"invoice-learning.schema.json","pointer":"#/$defs/QuantityV1"},{"alias":"InvoiceNumberTextV1","source":"invoice-learning.schema.json","pointer":"#/$defs/InvoiceNumberTextV1"},{"alias":"DescriptionTextV1","source":"invoice-learning.schema.json","pointer":"#/$defs/DescriptionTextV1"},{"alias":"DisplayNameV1","source":"invoice-learning.schema.json","pointer":"#/$defs/DisplayNameV1"},{"alias":"CurrencyCodeV1","source":"invoice-learning.schema.json","pointer":"#/$defs/CurrencyCodeV1"},{"alias":"IsoDateVersionV1","source":"invoice-learning.schema.json","pointer":"#/$defs/IsoDateVersionV1"},{"alias":"NormalizedRectV1","source":"invoice-learning.schema.json","pointer":"#/$defs/NormalizedRectV1"},{"alias":"TokenRefV1","source":"invoice-learning.schema.json","pointer":"#/$defs/TokenRefV1"},{"alias":"GroupRefV1","source":"invoice-learning.schema.json","pointer":"#/$defs/GroupRefV1"},{"alias":"LocalRefV1","source":"invoice-learning.schema.json","pointer":"#/$defs/LocalRefV1"},{"alias":"EvidenceFragmentV1","source":"invoice-learning.schema.json","pointer":"#/$defs/EvidenceFragmentV1"},{"alias":"MissingReasonV1","source":"invoice-learning.schema.json","pointer":"#/$defs/MissingReasonV1"},{"alias":"DescriptionTextEnvelopeV1","source":"invoice-learning.schema.json","pointer":"#/$defs/DescriptionTextEnvelopeV1"},{"alias":"QuantityEnvelopeV1","source":"invoice-learning.schema.json","pointer":"#/$defs/QuantityEnvelopeV1"},{"alias":"MoneyEnvelopeV1","source":"invoice-learning.schema.json","pointer":"#/$defs/MoneyEnvelopeV1"},{"alias":"InvoiceNumberEnvelopeV1","source":"invoice-learning.schema.json","pointer":"#/$defs/InvoiceNumberEnvelopeV1"},{"alias":"DateEnvelopeV1","source":"invoice-learning.schema.json","pointer":"#/$defs/DateEnvelopeV1"},{"alias":"CurrencyEnvelopeV1","source":"invoice-learning.schema.json","pointer":"#/$defs/CurrencyEnvelopeV1"},{"alias":"DateTextV1","source":"invoice-learning.schema.json","pointer":"#/$defs/DateTextV1"},{"alias":"SupplierCandidateV1","source":"invoice-learning.schema.json","pointer":"#/$defs/SupplierCandidateV1"},{"alias":"SupplierValueV1","source":"invoice-learning.schema.json","pointer":"#/$defs/SupplierValueV1"},{"alias":"SupplierCandidateEnvelopeV1","source":"invoice-learning.schema.json","pointer":"#/$defs/SupplierCandidateEnvelopeV1"},{"alias":"ColumnV1","source":"invoice-learning.schema.json","pointer":"#/$defs/ColumnV1"},{"alias":"HeaderMarkerV1","source":"invoice-learning.schema.json","pointer":"#/$defs/HeaderMarkerV1"},{"alias":"RepeatedHeaderSignatureV1","source":"invoice-learning.schema.json","pointer":"#/$defs/RepeatedHeaderSignatureV1"},{"alias":"LineItemV1","source":"invoice-learning.schema.json","pointer":"#/$defs/LineItemV1"},{"alias":"TableStructureV1","source":"invoice-learning.schema.json","pointer":"#/$defs/TableStructureV1"},{"alias":"IsoSnapshotRefV1","source":"invoice-learning.schema.json","pointer":"#/$defs/IsoSnapshotRefV1"},{"alias":"ExtractedInvoiceRecordV1","source":"invoice-learning.schema.json","pointer":"#/$defs/ExtractedInvoiceRecordV1"},{"alias":"ReviewReasonV1","source":"invoice-learning.schema.json","pointer":"#/$defs/ReviewReasonV1"},{"alias":"InvoiceEvidenceV1","source":"invoice-learning.schema.json","pointer":"#/$defs/InvoiceEvidenceV1"},{"alias":"AnchorV1","source":"template.schema.json","pointer":"#/$defs/AnchorV1"},{"alias":"NormalizationStepV1","source":"template.schema.json","pointer":"#/$defs/NormalizationStepV1"},{"alias":"FieldSelectorV1","source":"template.schema.json","pointer":"#/$defs/FieldSelectorV1"},{"alias":"RowSelectorV1","source":"template.schema.json","pointer":"#/$defs/RowSelectorV1"},{"alias":"CellSelectorV1","source":"template.schema.json","pointer":"#/$defs/CellSelectorV1"},{"alias":"TemplateLineItemsV1","source":"template.schema.json","pointer":"#/$defs/TemplateLineItemsV1"},{"alias":"TemplateSelectorsV1","source":"template.schema.json","pointer":"#/$defs/TemplateSelectorsV1"},{"alias":"TemplateProvenanceV1","source":"template.schema.json","pointer":"#/$defs/TemplateProvenanceV1"},{"alias":"TemplateV1","source":"template.schema.json","pointer":"#/$defs/TemplateV1"},{"alias":"TemplateIdV1","source":"template.schema.json","pointer":"#/$defs/TemplateIdV1"},{"alias":"AnchorSuggestionRefV1","source":"proposal.schema.json","pointer":"#/$defs/AnchorSuggestionRefV1"},{"alias":"SuggestionFieldSelectorV1","source":"proposal.schema.json","pointer":"#/$defs/SuggestionFieldSelectorV1"},{"alias":"SuggestionCellSelectorV1","source":"proposal.schema.json","pointer":"#/$defs/SuggestionCellSelectorV1"},{"alias":"SuggestionRowSelectorV1","source":"proposal.schema.json","pointer":"#/$defs/SuggestionRowSelectorV1"},{"alias":"ProposalSuggestionLineItemsV1","source":"proposal.schema.json","pointer":"#/$defs/ProposalSuggestionLineItemsV1"},{"alias":"ProposalSuggestionSelectorsV1","source":"proposal.schema.json","pointer":"#/$defs/ProposalSuggestionSelectorsV1"},{"alias":"ProposalSuggestionV1","source":"proposal.schema.json","pointer":"#/$defs/ProposalSuggestionV1"},{"alias":"TokenProjectionV1","source":"proposal.schema.json","pointer":"#/$defs/TokenProjectionV1"},{"alias":"GroupProjectionV1","source":"proposal.schema.json","pointer":"#/$defs/GroupProjectionV1"},{"alias":"RowMemberRelationshipV1","source":"proposal.schema.json","pointer":"#/$defs/RowMemberRelationshipV1"},{"alias":"ColumnMemberRelationshipV1","source":"proposal.schema.json","pointer":"#/$defs/ColumnMemberRelationshipV1"},{"alias":"HeaderForColumnRelationshipV1","source":"proposal.schema.json","pointer":"#/$defs/HeaderForColumnRelationshipV1"},{"alias":"LabelForValueRelationshipV1","source":"proposal.schema.json","pointer":"#/$defs/LabelForValueRelationshipV1"},{"alias":"NextReadingRelationshipV1","source":"proposal.schema.json","pointer":"#/$defs/NextReadingRelationshipV1"},{"alias":"RepeatedHeaderRelationshipV1","source":"proposal.schema.json","pointer":"#/$defs/RepeatedHeaderRelationshipV1"},{"alias":"RelationshipV1","source":"proposal.schema.json","pointer":"#/$defs/RelationshipV1"},{"alias":"ProjectionCountsV1","source":"proposal.schema.json","pointer":"#/$defs/ProjectionCountsV1"},{"alias":"ProjectionHashInputV1","source":"proposal.schema.json","pointer":"#/$defs/ProjectionHashInputV1"},{"alias":"ProposalProjectionV1","source":"proposal.schema.json","pointer":"#/$defs/ProposalProjectionV1"},{"alias":"OperationKindV1","source":"operations.schema.json","pointer":"#/$defs/OperationKindV1"},{"alias":"SafeContextV1","source":"operations.schema.json","pointer":"#/$defs/SafeContextV1"},{"alias":"ErrorCodeV1","source":"operations.schema.json","pointer":"#/$defs/ErrorCodeV1"},{"alias":"MessageKeyV1","source":"operations.schema.json","pointer":"#/$defs/MessageKeyV1"},{"alias":"ErrorV1","source":"operations.schema.json","pointer":"#/$defs/ErrorV1"},{"alias":"LimitsV1","source":"operations.schema.json","pointer":"#/$defs/LimitsV1"},{"alias":"DocumentNameV1","source":"operations.schema.json","pointer":"#/$defs/DocumentNameV1"},{"alias":"DocumentRefV1","source":"operations.schema.json","pointer":"#/$defs/DocumentRefV1"},{"alias":"PageBitmapV1","source":"operations.schema.json","pointer":"#/$defs/PageBitmapV1"},{"alias":"ReplayCountersV1","source":"operations.schema.json","pointer":"#/$defs/ReplayCountersV1"},{"alias":"ReplayResultV1","source":"operations.schema.json","pointer":"#/$defs/ReplayResultV1"},{"alias":"ProposalBindingV1","source":"operations.schema.json","pointer":"#/$defs/ProposalBindingV1"},{"alias":"NegotiateRequestV1","source":"operations.schema.json","pointer":"#/$defs/NegotiateRequestV1"},{"alias":"NegotiateSuccessV1","source":"operations.schema.json","pointer":"#/$defs/NegotiateSuccessV1"},{"alias":"NegotiateErrorV1","source":"operations.schema.json","pointer":"#/$defs/NegotiateErrorV1"},{"alias":"ExtractInvoiceRequestV1","source":"operations.schema.json","pointer":"#/$defs/ExtractInvoiceRequestV1"},{"alias":"ExtractInvoiceResponseV1","source":"operations.schema.json","pointer":"#/$defs/ExtractInvoiceResponseV1"},{"alias":"ReplayTemplateRequestV1","source":"operations.schema.json","pointer":"#/$defs/ReplayTemplateRequestV1"},{"alias":"ReplayTemplateResponseV1","source":"operations.schema.json","pointer":"#/$defs/ReplayTemplateResponseV1"},{"alias":"RenderPageRequestV1","source":"operations.schema.json","pointer":"#/$defs/RenderPageRequestV1"},{"alias":"RenderPageResponseV1","source":"operations.schema.json","pointer":"#/$defs/RenderPageResponseV1"},{"alias":"ProposalPrepareRequestV1","source":"operations.schema.json","pointer":"#/$defs/ProposalPrepareRequestV1"},{"alias":"ProposalPrepareResponseV1","source":"operations.schema.json","pointer":"#/$defs/ProposalPrepareResponseV1"},{"alias":"ProposalSubmitRequestV1","source":"operations.schema.json","pointer":"#/$defs/ProposalSubmitRequestV1"},{"alias":"ProposalSubmitSuggestionV1","source":"operations.schema.json","pointer":"#/$defs/ProposalSubmitSuggestionV1"},{"alias":"ProposalSubmitFailureV1","source":"operations.schema.json","pointer":"#/$defs/ProposalSubmitFailureV1"},{"alias":"ProposalSubmitResultV1","source":"operations.schema.json","pointer":"#/$defs/ProposalSubmitResultV1"},{"alias":"ProposalSubmitResponseV1","source":"operations.schema.json","pointer":"#/$defs/ProposalSubmitResponseV1"},{"alias":"ProposalCancelRequestV1","source":"operations.schema.json","pointer":"#/$defs/ProposalCancelRequestV1"},{"alias":"ProposalCancelResponseV1","source":"operations.schema.json","pointer":"#/$defs/ProposalCancelResponseV1"},{"alias":"ProposalDisclosureV1","source":"operations.schema.json","pointer":"#/$defs/ProposalDisclosureV1"},{"alias":"OperationRequestV1","source":"operations.schema.json","pointer":"#/$defs/OperationRequestV1"},{"alias":"OperationSuccessV1","source":"operations.schema.json","pointer":"#/$defs/OperationSuccessV1"},{"alias":"OperationErrorV1","source":"operations.schema.json","pointer":"#/$defs/OperationErrorV1"},{"alias":"OperationResponseV1","source":"operations.schema.json","pointer":"#/$defs/OperationResponseV1"},{"alias":"OperationEnvelopeV1","source":"operations.schema.json","pointer":"#/$defs/OperationEnvelopeV1"},{"alias":"CorpusManifestV1","source":"corpus-manifest.json","pointer":null},{"alias":"CorpusManifestEntryV1","source":"corpus-manifest.json","pointer":null},{"alias":"SyntheticCorpusEntryV1","source":"corpus-manifest.json","pointer":null},{"alias":"PrivateCorpusEntryV1","source":"corpus-manifest.json","pointer":null}],"contractDigest":"dad30018279dcbbef9a93627258d3a884a490bc11dfb808f828bac75fa0329dc"}
+{
+  "manifestSchemaVersion": "1",
+  "capability": "invoice_learning_v1",
+  "protocolVersion": 1,
+  "schemaVersions": {
+    "invoiceEvidence": "1",
+    "template": "1",
+    "executionPolicy": "1",
+    "projection": "1",
+    "proposalResponse": "1"
+  },
+  "negotiation": {
+    "requestAlias": "NegotiateRequestV1",
+    "successAlias": "NegotiateSuccessV1",
+    "errorAlias": "NegotiateErrorV1"
+  },
+  "operations": [
+    {
+      "kind": "extractInvoiceV1",
+      "requestAlias": "ExtractInvoiceRequestV1",
+      "responseAlias": "ExtractInvoiceResponseV1"
+    },
+    {
+      "kind": "replayTemplateV1",
+      "requestAlias": "ReplayTemplateRequestV1",
+      "responseAlias": "ReplayTemplateResponseV1"
+    },
+    {
+      "kind": "renderPageV1",
+      "requestAlias": "RenderPageRequestV1",
+      "responseAlias": "RenderPageResponseV1"
+    },
+    {
+      "kind": "proposalPrepareV1",
+      "requestAlias": "ProposalPrepareRequestV1",
+      "responseAlias": "ProposalPrepareResponseV1"
+    },
+    {
+      "kind": "proposalSubmitV1",
+      "requestAlias": "ProposalSubmitRequestV1",
+      "responseAlias": "ProposalSubmitResponseV1"
+    },
+    {
+      "kind": "proposalCancelV1",
+      "requestAlias": "ProposalCancelRequestV1",
+      "responseAlias": "ProposalCancelResponseV1"
+    }
+  ],
+  "schemas": [
+    {
+      "name": "invoiceEvidence",
+      "path": "invoice-learning.schema.json",
+      "sha256": "94820f015b91c2ee730a960f8459fec363abf47c29131a9ad965bf356bf013fe"
+    },
+    {
+      "name": "template",
+      "path": "template.schema.json",
+      "sha256": "62d18797267c2929c65f9b5d56caf2491e8ece908bcba6cfb16326221461629b"
+    },
+    {
+      "name": "proposal",
+      "path": "proposal.schema.json",
+      "sha256": "155d55f6374157f95c2f2e79239035bc0d4211d541a24494772e7e0a725024d7"
+    },
+    {
+      "name": "operations",
+      "path": "operations.schema.json",
+      "sha256": "cb1b91c6796d0898251539a928e87f85c22be6d2dbb66201a3b731d4fed9fc5c"
+    },
+    {
+      "name": "corpus",
+      "path": "corpus-manifest.json",
+      "sha256": "47c7388fdb82e8d24848e227f08922a102d1c517b81547b19175e14705049ef9"
+    }
+  ],
+  "aliases": [
+    {
+      "alias": "AsciiTokenV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/AsciiTokenV1"
+    },
+    {
+      "alias": "Sha256V1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/Sha256V1"
+    },
+    {
+      "alias": "RequestIdV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/RequestIdV1"
+    },
+    {
+      "alias": "DocumentIdV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/DocumentIdV1"
+    },
+    {
+      "alias": "TokenIdV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/TokenIdV1"
+    },
+    {
+      "alias": "GroupIdV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/GroupIdV1"
+    },
+    {
+      "alias": "AnchorIdV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/AnchorIdV1"
+    },
+    {
+      "alias": "EvidenceIdV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/EvidenceIdV1"
+    },
+    {
+      "alias": "SupplierCandidateIdV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/SupplierCandidateIdV1"
+    },
+    {
+      "alias": "MatchingKeyV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/MatchingKeyV1"
+    },
+    {
+      "alias": "ActionIdV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/ActionIdV1"
+    },
+    {
+      "alias": "TransactionIdV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/TransactionIdV1"
+    },
+    {
+      "alias": "PolicyIdV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/PolicyIdV1"
+    },
+    {
+      "alias": "TimestampV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/TimestampV1"
+    },
+    {
+      "alias": "MoneyV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/MoneyV1"
+    },
+    {
+      "alias": "QuantityV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/QuantityV1"
+    },
+    {
+      "alias": "InvoiceNumberTextV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/InvoiceNumberTextV1"
+    },
+    {
+      "alias": "DescriptionTextV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/DescriptionTextV1"
+    },
+    {
+      "alias": "DisplayNameV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/DisplayNameV1"
+    },
+    {
+      "alias": "CurrencyCodeV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/CurrencyCodeV1"
+    },
+    {
+      "alias": "IsoDateVersionV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/IsoDateVersionV1"
+    },
+    {
+      "alias": "NormalizedRectV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/NormalizedRectV1"
+    },
+    {
+      "alias": "TokenRefV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/TokenRefV1"
+    },
+    {
+      "alias": "GroupRefV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/GroupRefV1"
+    },
+    {
+      "alias": "LocalRefV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/LocalRefV1"
+    },
+    {
+      "alias": "EvidenceFragmentV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/EvidenceFragmentV1"
+    },
+    {
+      "alias": "MissingReasonV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/MissingReasonV1"
+    },
+    {
+      "alias": "DescriptionTextEnvelopeV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/DescriptionTextEnvelopeV1"
+    },
+    {
+      "alias": "QuantityEnvelopeV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/QuantityEnvelopeV1"
+    },
+    {
+      "alias": "MoneyEnvelopeV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/MoneyEnvelopeV1"
+    },
+    {
+      "alias": "InvoiceNumberEnvelopeV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/InvoiceNumberEnvelopeV1"
+    },
+    {
+      "alias": "DateEnvelopeV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/DateEnvelopeV1"
+    },
+    {
+      "alias": "CurrencyEnvelopeV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/CurrencyEnvelopeV1"
+    },
+    {
+      "alias": "DateTextV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/DateTextV1"
+    },
+    {
+      "alias": "SupplierCandidateV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/SupplierCandidateV1"
+    },
+    {
+      "alias": "SupplierValueV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/SupplierValueV1"
+    },
+    {
+      "alias": "SupplierCandidateEnvelopeV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/SupplierCandidateEnvelopeV1"
+    },
+    {
+      "alias": "ColumnV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/ColumnV1"
+    },
+    {
+      "alias": "HeaderMarkerV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/HeaderMarkerV1"
+    },
+    {
+      "alias": "RepeatedHeaderSignatureV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/RepeatedHeaderSignatureV1"
+    },
+    {
+      "alias": "LineItemV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/LineItemV1"
+    },
+    {
+      "alias": "TableStructureV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/TableStructureV1"
+    },
+    {
+      "alias": "IsoSnapshotRefV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/IsoSnapshotRefV1"
+    },
+    {
+      "alias": "ExtractedInvoiceRecordV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/ExtractedInvoiceRecordV1"
+    },
+    {
+      "alias": "ReviewReasonV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/ReviewReasonV1"
+    },
+    {
+      "alias": "InvoiceEvidenceV1",
+      "source": "invoice-learning.schema.json",
+      "pointer": "#/$defs/InvoiceEvidenceV1"
+    },
+    {
+      "alias": "AnchorV1",
+      "source": "template.schema.json",
+      "pointer": "#/$defs/AnchorV1"
+    },
+    {
+      "alias": "NormalizationStepV1",
+      "source": "template.schema.json",
+      "pointer": "#/$defs/NormalizationStepV1"
+    },
+    {
+      "alias": "FieldSelectorV1",
+      "source": "template.schema.json",
+      "pointer": "#/$defs/FieldSelectorV1"
+    },
+    {
+      "alias": "RowSelectorV1",
+      "source": "template.schema.json",
+      "pointer": "#/$defs/RowSelectorV1"
+    },
+    {
+      "alias": "CellSelectorV1",
+      "source": "template.schema.json",
+      "pointer": "#/$defs/CellSelectorV1"
+    },
+    {
+      "alias": "TemplateLineItemsV1",
+      "source": "template.schema.json",
+      "pointer": "#/$defs/TemplateLineItemsV1"
+    },
+    {
+      "alias": "TemplateSelectorsV1",
+      "source": "template.schema.json",
+      "pointer": "#/$defs/TemplateSelectorsV1"
+    },
+    {
+      "alias": "TemplateProvenanceV1",
+      "source": "template.schema.json",
+      "pointer": "#/$defs/TemplateProvenanceV1"
+    },
+    {
+      "alias": "TemplateV1",
+      "source": "template.schema.json",
+      "pointer": "#/$defs/TemplateV1"
+    },
+    {
+      "alias": "TemplateIdV1",
+      "source": "template.schema.json",
+      "pointer": "#/$defs/TemplateIdV1"
+    },
+    {
+      "alias": "AnchorSuggestionRefV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/AnchorSuggestionRefV1"
+    },
+    {
+      "alias": "SuggestionFieldSelectorV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/SuggestionFieldSelectorV1"
+    },
+    {
+      "alias": "SuggestionCellSelectorV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/SuggestionCellSelectorV1"
+    },
+    {
+      "alias": "SuggestionRowSelectorV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/SuggestionRowSelectorV1"
+    },
+    {
+      "alias": "ProposalSuggestionLineItemsV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/ProposalSuggestionLineItemsV1"
+    },
+    {
+      "alias": "ProposalSuggestionSelectorsV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/ProposalSuggestionSelectorsV1"
+    },
+    {
+      "alias": "ProposalSuggestionV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/ProposalSuggestionV1"
+    },
+    {
+      "alias": "TokenProjectionV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/TokenProjectionV1"
+    },
+    {
+      "alias": "GroupProjectionV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/GroupProjectionV1"
+    },
+    {
+      "alias": "RowMemberRelationshipV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/RowMemberRelationshipV1"
+    },
+    {
+      "alias": "ColumnMemberRelationshipV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/ColumnMemberRelationshipV1"
+    },
+    {
+      "alias": "HeaderForColumnRelationshipV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/HeaderForColumnRelationshipV1"
+    },
+    {
+      "alias": "LabelForValueRelationshipV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/LabelForValueRelationshipV1"
+    },
+    {
+      "alias": "NextReadingRelationshipV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/NextReadingRelationshipV1"
+    },
+    {
+      "alias": "RepeatedHeaderRelationshipV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/RepeatedHeaderRelationshipV1"
+    },
+    {
+      "alias": "RelationshipV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/RelationshipV1"
+    },
+    {
+      "alias": "ProjectionCountsV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/ProjectionCountsV1"
+    },
+    {
+      "alias": "ProjectionHashInputV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/ProjectionHashInputV1"
+    },
+    {
+      "alias": "ProposalProjectionV1",
+      "source": "proposal.schema.json",
+      "pointer": "#/$defs/ProposalProjectionV1"
+    },
+    {
+      "alias": "OperationKindV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/OperationKindV1"
+    },
+    {
+      "alias": "SafeContextV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/SafeContextV1"
+    },
+    {
+      "alias": "ErrorCodeV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ErrorCodeV1"
+    },
+    {
+      "alias": "MessageKeyV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/MessageKeyV1"
+    },
+    {
+      "alias": "ErrorV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ErrorV1"
+    },
+    {
+      "alias": "LimitsV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/LimitsV1"
+    },
+    {
+      "alias": "DocumentNameV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/DocumentNameV1"
+    },
+    {
+      "alias": "DocumentRefV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/DocumentRefV1"
+    },
+    {
+      "alias": "PageBitmapV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/PageBitmapV1"
+    },
+    {
+      "alias": "ReplayCountersV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ReplayCountersV1"
+    },
+    {
+      "alias": "ReplayResultV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ReplayResultV1"
+    },
+    {
+      "alias": "ProposalBindingV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ProposalBindingV1"
+    },
+    {
+      "alias": "NegotiateRequestV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/NegotiateRequestV1"
+    },
+    {
+      "alias": "NegotiateSuccessV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/NegotiateSuccessV1"
+    },
+    {
+      "alias": "NegotiateErrorV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/NegotiateErrorV1"
+    },
+    {
+      "alias": "ExtractInvoiceRequestV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ExtractInvoiceRequestV1"
+    },
+    {
+      "alias": "ExtractInvoiceResponseV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ExtractInvoiceResponseV1"
+    },
+    {
+      "alias": "ReplayTemplateRequestV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ReplayTemplateRequestV1"
+    },
+    {
+      "alias": "ReplayTemplateResponseV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ReplayTemplateResponseV1"
+    },
+    {
+      "alias": "RenderPageRequestV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/RenderPageRequestV1"
+    },
+    {
+      "alias": "RenderPageResponseV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/RenderPageResponseV1"
+    },
+    {
+      "alias": "ProposalPrepareRequestV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ProposalPrepareRequestV1"
+    },
+    {
+      "alias": "ProposalPrepareResponseV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ProposalPrepareResponseV1"
+    },
+    {
+      "alias": "ProposalSubmitRequestV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ProposalSubmitRequestV1"
+    },
+    {
+      "alias": "ProposalSubmitSuggestionV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ProposalSubmitSuggestionV1"
+    },
+    {
+      "alias": "ProposalSubmitFailureV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ProposalSubmitFailureV1"
+    },
+    {
+      "alias": "ProposalSubmitResultV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ProposalSubmitResultV1"
+    },
+    {
+      "alias": "ProposalSubmitResponseV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ProposalSubmitResponseV1"
+    },
+    {
+      "alias": "ProposalCancelRequestV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ProposalCancelRequestV1"
+    },
+    {
+      "alias": "ProposalCancelResponseV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ProposalCancelResponseV1"
+    },
+    {
+      "alias": "ProposalDisclosureV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/ProposalDisclosureV1"
+    },
+    {
+      "alias": "OperationRequestV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/OperationRequestV1"
+    },
+    {
+      "alias": "OperationSuccessV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/OperationSuccessV1"
+    },
+    {
+      "alias": "OperationErrorV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/OperationErrorV1"
+    },
+    {
+      "alias": "OperationResponseV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/OperationResponseV1"
+    },
+    {
+      "alias": "OperationEnvelopeV1",
+      "source": "operations.schema.json",
+      "pointer": "#/$defs/OperationEnvelopeV1"
+    },
+    {
+      "alias": "CorpusManifestV1",
+      "source": "corpus-manifest.json",
+      "pointer": null
+    },
+    {
+      "alias": "CorpusManifestEntryV1",
+      "source": "corpus-manifest.json",
+      "pointer": null
+    },
+    {
+      "alias": "SyntheticCorpusEntryV1",
+      "source": "corpus-manifest.json",
+      "pointer": null
+    },
+    {
+      "alias": "PrivateCorpusEntryV1",
+      "source": "corpus-manifest.json",
+      "pointer": null
+    }
+  ],
+  "contractDigest": "df516a6f628691c4143b4fad7b664a9d7587c2207ecd69489f59000a5f7a6ae8"
+}
