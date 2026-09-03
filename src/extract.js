@@ -3,6 +3,7 @@
 // caller can wrap the result for chat summarization.
 
 import { parseVendorInvoice } from "./vendor-parsers.js";
+import { spawn as spawnProcess } from "node:child_process";
 
 export const MAX_PDF_BYTES = 12 * 1024 * 1024; // 12 MiB raw PDF cap
 export const MIN_PDF_BYTES = 8; // smallest reasonable %PDF-1.x header
@@ -12,6 +13,198 @@ export const HARD_MAX_PAGES = 200;
 export const DEFAULT_MAX_CHARS = 80_000;
 export const HARD_MAX_CHARS = 200_000;
 export const MAX_PER_PAGE_CHARS = 4_000;
+const OCR_TIMEOUT_MS = 30_000;
+const OCR_PAGE = 1;
+const OCR_DPI = 200;
+const OCR_MAX_RASTER_BYTES = 8 * 1024 * 1024;
+const OCR_MAX_TEXT_CHARS = 20_000;
+const OCR_MAX_STDERR_BYTES = 4 * 1024;
+const OCR_LANGUAGE = "spa+eng";
+const OCR_FALLBACK_LANGUAGE = "eng";
+
+const ocrError = (code) => ({
+  text: "",
+  untrusted: true,
+  trustBoundary: "ocr_local_only",
+  error: code,
+});
+
+const ocrEnvelope = (text = "", error) => ({
+  text,
+  untrusted: true,
+  trustBoundary: "ocr_local_only",
+  ...(error ? { error } : {}),
+});
+
+function parseOcrTsv(output, maxTextChars) {
+  const lines = output.toString("utf8").split(/\r?\n/);
+  const tokens = [];
+  let pageWidth = null;
+  let pageHeight = null;
+  for (const line of lines) {
+    if (!line || line.startsWith("level\t")) continue;
+    const columns = line.split("\t");
+    if (columns.length < 12) continue;
+    const level = Number(columns[0]);
+    const width = Number(columns[8]);
+    const height = Number(columns[9]);
+    if (level === 1 && Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+      pageWidth ??= width;
+      pageHeight ??= height;
+      continue;
+    }
+    if (level !== 5 || !columns[11]?.trim()) continue;
+    const page = Number(columns[1]);
+    const left = Number(columns[6]);
+    const top = Number(columns[7]);
+    const confidence = Number(columns[10]);
+    if (!Number.isInteger(page) || page < 1 || ![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) continue;
+    if (!Number.isFinite(pageWidth) || !Number.isFinite(pageHeight)) continue;
+    tokens.push({
+      text: columns[11].trim(),
+      page,
+      bbox: { x: left, y: pageHeight - top - height, width, height },
+      confidenceBps: Number.isFinite(confidence) && confidence >= 0 ? Math.min(10000, Math.round(confidence * 100)) : 0,
+    });
+  }
+  if (tokens.length === 0) return { text: output.toString("utf8").slice(0, maxTextChars), tokens: [] };
+  return {
+    text: tokens.map(({ text }) => text).join(" ").slice(0, maxTextChars),
+    tokens,
+    pageWidth,
+    pageHeight,
+  };
+}
+
+function stderrTail(chunks) {
+  const value = Buffer.concat(chunks).toString("utf8");
+  return value.slice(-OCR_MAX_STDERR_BYTES);
+}
+
+function isMissingLanguageData(stderr) {
+  return /failed loading language|error opening data file|language data/i.test(stderr);
+}
+
+function runBoundedProcess(command, args, input, { deadline, maxStdout, spawnImpl }) {
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawnImpl(command, args, {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+    } catch (error) {
+      reject(Object.assign(new Error("ocr_unavailable"), { code: "ocr_unavailable", cause: error }));
+      return;
+    }
+
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let settled = false;
+    const remaining = () => Math.max(1, deadline - Date.now());
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      reject(Object.assign(new Error("ocr_timeout"), { code: "ocr_timeout" }));
+    }, remaining());
+
+    const fail = (code, cause) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill("SIGKILL");
+      reject(Object.assign(new Error(code), { code, cause, stderr: stderrTail(stderr) }));
+    };
+
+    child.stdout.on("data", (chunk) => {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > maxStdout) {
+        fail("ocr_output_too_large");
+        return;
+      }
+      stdout.push(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr.push(chunk);
+      if (Buffer.concat(stderr).length > OCR_MAX_STDERR_BYTES) stderr.splice(0, stderr.length - 1);
+    });
+    child.on("error", (error) => {
+      fail(error.code === "ENOENT" ? "ocr_unavailable" : "ocr_engine_error", error);
+    });
+    child.on("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code !== 0 || signal) {
+        const error = isMissingLanguageData(stderrTail(stderr)) ? "ocr_language_missing" : "ocr_engine_error";
+        reject(Object.assign(new Error(error), { code: error, stderr: stderrTail(stderr) }));
+        return;
+      }
+      resolve({ stdout: Buffer.concat(stdout), stderr: stderrTail(stderr) });
+    });
+
+    // A process that rejects its input (notably Tesseract when language data
+    // is missing) may close stdin before the write completes. The close event
+    // remains the authoritative result and carries the bounded stderr tail.
+    child.stdin.on("error", () => {});
+    child.stdin.end(input);
+  });
+}
+
+/** OCR is deliberately bounded to one page and remains local-only/untrusted. */
+export async function extractOcrFromPdfPage(pageBuffer, pageNumber = OCR_PAGE, options = {}) {
+  if (pageNumber !== OCR_PAGE) return ocrEnvelope("", "ocr_page_not_supported");
+  if (!Buffer.isBuffer(pageBuffer) || pageBuffer.length === 0) {
+    return ocrEnvelope("", "ocr_invalid_input");
+  }
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : OCR_TIMEOUT_MS;
+  const spawnImpl = options.spawnImpl ?? spawnProcess;
+  const pdftoppm = options.pdftoppmCommand ?? "pdftoppm";
+  const tesseract = options.tesseractCommand ?? "tesseract";
+  const language = options.language ?? OCR_LANGUAGE;
+  const fallbackLanguage = options.fallbackLanguage ?? OCR_FALLBACK_LANGUAGE;
+  const maxRasterBytes = options.maxRasterBytes ?? OCR_MAX_RASTER_BYTES;
+  const maxTextChars = options.maxTextChars ?? OCR_MAX_TEXT_CHARS;
+  const deadline = Date.now() + timeoutMs;
+  try {
+    const raster = await runBoundedProcess(
+      pdftoppm,
+      ["-f", "1", "-l", "1", "-r", String(OCR_DPI), "-png", "-singlefile", "-"],
+      pageBuffer,
+      { deadline, maxStdout: maxRasterBytes, spawnImpl },
+    );
+    let ocr;
+    try {
+      ocr = await runBoundedProcess(
+        tesseract,
+        ["stdin", "stdout", "-l", language, "--psm", "6", "tsv"],
+        raster.stdout,
+        { deadline, maxStdout: maxTextChars, spawnImpl },
+      );
+    } catch (error) {
+      if (error.code !== "ocr_language_missing") throw error;
+      ocr = await runBoundedProcess(
+        tesseract,
+        ["stdin", "stdout", "-l", fallbackLanguage, "--psm", "6", "tsv"],
+        raster.stdout,
+        { deadline, maxStdout: maxTextChars, spawnImpl },
+      );
+    }
+    const parsed = parseOcrTsv(ocr.stdout, maxTextChars);
+    return {
+      ...ocrEnvelope(parsed.text),
+      ...(parsed.tokens.length > 0 ? {
+        tokens: parsed.tokens,
+        pageWidth: parsed.pageWidth,
+        pageHeight: parsed.pageHeight,
+      } : { tokens: [] }),
+    };
+  } catch (error) {
+    return ocrError(error?.code ?? "ocr_engine_error");
+  }
+}
 
 // Deterministic invoice-field bounds. Conservative on purpose: labels live in
 // untrusted PDF text, so we never widen these caps without a code change.
@@ -34,18 +227,19 @@ const INVOICE_UNTRUSTED =
 // ticket date seen on Mercadona receipts. Both labels appear in some Mercadona
 // PDFs so we expose them as separate fields.
 const LABEL_INVOICE_DATE_RE =
-  /(?:^|\s)(?:fecha\s+factura|fecha\s+de\s+factura|fecha\s+facturaci[oó]n)(?!\s+simplificada)\s*[:\-]?\s*/i;
+  /(?:^|\s)(?:fecha\s+factura|fecha\s+de\s+factura|fecha\s+de\s+emisi[oó]n|fecha\s+facturaci[oó]n|invoice\s+date|date\s+of\s+invoice|date\s+of\s+issue)(?!\s+simplificada)\s*[:\-]?\s*/i;
 const LABEL_SIMPLIFIED_DATE_RE =
   /(?:^|\s)(?:fecha\s+factura\s+simplificada|fecha\s+simplificada)\s*[:\-]?\s*/i;
 // Invoice-number labels always carry the "Nº" prefix in real Spanish invoices.
 // Bare "Factura:" alone is rejected because it would also match the "Fecha
 // Factura" label and pull the date into the invoice number slot.
 const LABEL_INVOICE_NUMBER_RE =
-  /(?:^|\s)(?:n[º°\.]?\s*factura|n[º°\.]?\s*de\s+factura)\s*[:\-]?\s*/i;
-const LABEL_SUBTOTAL_RE = /(?:^|\s)(?:subtotal|base\s+imponible|importe\s+neto)\s*[:\-]?\s*/i;
+  /(?:^|\s)(?:n(?:[º°]|\.\s*o|\.)?\s*(?:de\s+)?factura|invoice\s+(?:no|number|#)|factura\s+n\s*[*º°]?|n\s*[*º°]?\s*factura)\s*[:\-]?\s*/i;
+const LABEL_SUBTOTAL_RE = /(?:^|\s)(?:subtotal|base\s+imponible|taxable\s+base|importe\s+neto)\s*[:\-]?\s*/i;
 const LABEL_TAX_RE = /(?:^|\s)(?:igic|iva|tax(?:es)?|i\.g\.i\.c\.)\s*(?:\([^)]+\))?\s*[:\-]?\s*/i;
 const LABEL_TOTAL_RE =
-  /(?:^|\s)(?:importe\s+total|total\s+(?:eur|\u20ac)|total(?:\s*\(?\s*eur\s*\)?)?)\s*[:\-]?\s*/i;
+  /(?:^|\s)(?:importe\s+total|total\s+(?:eur|\u20ac)|total(?:\s*\(?\s*eur\s*\)?)?|amount\s+due|grand\s+total|total\s+amount)\s*[:\-]?\s*/i;
+export const SCALAR_LABELS = Object.freeze({ invoiceDate: LABEL_INVOICE_DATE_RE, invoiceNumber: LABEL_INVOICE_NUMBER_RE, subtotal: LABEL_SUBTOTAL_RE, tax: LABEL_TAX_RE, total: LABEL_TOTAL_RE });
 
 // Decimal amount with optional thousands separators. Always captures a value
 // with a fractional part so we don't accidentally swallow integers or version
@@ -104,6 +298,35 @@ function normalizeDate(value) {
   return null;
 }
 
+function normalizeInvoiceLabelLine(value) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[º°]/g, "o")
+    .replace(/[\u00a0\t]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function matchInvoiceLabel(line, labelRe) {
+  const direct = line.match(labelRe);
+  if (direct) return { line, match: direct };
+  const normalizedLine = normalizeInvoiceLabelLine(line);
+  const normalized = normalizedLine.match(labelRe);
+  return normalized ? { line: normalizedLine, match: normalized } : null;
+}
+
+/** A conservative document gate used by sidecar classification, not field parsing. */
+export function isInvoiceLikeText(text) {
+  if (typeof text !== "string") return false;
+  const normalized = normalizeInvoiceLabelLine(text).toLowerCase();
+  const identity = /(?:factura|invoice)\s*(?:n|no|number|date|fecha|#)?/.test(normalized);
+  const date = /(?:fecha|date)\s+(?:de\s+)?(?:factura|emision|invoice)/.test(normalized);
+  const financial = /(?:subtotal|base\s+imponible|importe\s+neto|total|tax|iva|igic|amount\s+due|grand\s+total)/.test(normalized);
+  const amount = AMOUNT_RE.test(normalized);
+  AMOUNT_RE.lastIndex = 0;
+  return identity && ((date && financial) || (financial && amount));
+}
+
 function normalizeDecimal(rawValue) {
   if (typeof rawValue !== "string") return null;
   const cleaned = rawValue.trim();
@@ -126,9 +349,10 @@ function sliceDateValue(text, labelRe) {
   const dateRe = /(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})/;
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const labelMatch = line.match(labelRe);
-    if (!labelMatch) continue;
+    const matched = matchInvoiceLabel(lines[i], labelRe);
+    if (!matched) continue;
+    const line = matched.line;
+    const labelMatch = matched.match;
     // Try the rest of the same line first.
     const after = line.slice(labelMatch.index + labelMatch[0].length);
     let search = after;
@@ -149,16 +373,29 @@ function sliceDateValue(text, labelRe) {
 function sliceLabel(text, labelRe, maxValueChars) {
   if (typeof text !== "string") return null;
   const lines = text.split(/\r?\n/);
-  for (const line of lines) {
-    const match = line.match(labelRe);
-    if (!match) continue;
+  for (let i = 0; i < lines.length; i += 1) {
+    const matched = matchInvoiceLabel(lines[i], labelRe);
+    if (!matched) continue;
+    const line = matched.line;
+    const match = matched.match;
     const after = line.slice(match.index + match[0].length).trim();
-    if (!after) continue;
+    const before = line.slice(0, match.index).trim();
+    let source = after;
+    if (!source) {
+      const beforeAmounts = before.match(AMOUNT_RE);
+      if (beforeAmounts?.length === 1 && before === beforeAmounts[0]) {
+        source = beforeAmounts[0];
+      }
+    }
+    if (!source && i + 1 < lines.length) {
+      source = normalizeInvoiceLabelLine(lines[i + 1]).trim();
+    }
+    if (!source) continue;
     // Stop at the next obvious invoice label so we don't drag in trailing words.
-    const stop = after.match(
-      /\b(?:fecha\s+factura|n[º°\.]?\s*factura|subtotal|igic|iva|importe\s+total|total)\b/i,
+    const stop = source.match(
+      /\b(?:fecha\s+factura|n[º°\.]?\s*factura|invoice\s+(?:date|no|number)|subtotal|igic|iva|tax|importe\s+total|amount\s+due|grand\s+total|total)\b/i,
     );
-    const value = (stop ? after.slice(0, stop.index) : after)
+    const value = (stop ? source.slice(0, stop.index) : source)
       .replace(/^[\s:;.,]+/, "")
       .replace(/\s+(?:eur|euros|\u20ac)\s*$/i, "")
       .trim();
@@ -363,7 +600,7 @@ function unionBbox(a, b) {
 // anchor each field to the PDF. ──────────────────────────────────────────
 
 function sliceDateValuePos(lines, labelRe) {
-  const dateRe = /(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})/;
+  const dateRe = /(\d{4})-(\d{2})-(\d{2})|(\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})/;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     const labelMatch = line.text.match(labelRe);
@@ -379,9 +616,12 @@ function sliceDateValuePos(lines, labelRe) {
     }
     const dateMatch = search.match(dateRe);
     if (!dateMatch) continue;
-    if (!isValidDate(dateMatch[3], dateMatch[2], dateMatch[1])) continue;
+    const year = dateMatch[1] ?? dateMatch[6];
+    const month = dateMatch[2] ?? dateMatch[5];
+    const day = dateMatch[3] ?? dateMatch[4];
+    if (!isValidDate(year, month, day)) continue;
     return {
-      value: `${dateMatch[3].padStart(4, "0")}-${dateMatch[2].padStart(2, "0")}-${dateMatch[1].padStart(2, "0")}`,
+      value: `${year.padStart(4, "0")}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`,
       bbox: line === valueLine ? line.bbox : unionBbox(line.bbox, valueLine.bbox),
     };
   }
@@ -395,10 +635,12 @@ function sliceLabelPos(lines, labelRe, maxValueChars) {
     const after = line.text.slice(match.index + match[0].length).trim();
     if (!after) continue;
     const stop = after.match(
-      /\b(?:fecha\s+factura|n[º°\.]?\s*factura|subtotal|igic|iva|importe\s+total|total)\b/i,
+      /\b(?:fecha\s+factura|date\s+of\s+(?:invoice|issue)|n[º°\.]?\s*factura|factura\s+n|invoice\s+(?:no|number|#)|subtotal|base\s+imponible|taxable\s+base|igic|iva|tax(?:es)?|importe\s+total|total)\b/i,
     );
     const value = (stop ? after.slice(0, stop.index) : after)
-      .replace(/^[\s:;.,]+/, "")
+      .replace(/^[\s:;.,|]+/, "")
+      .replace(/[|]+/g, " ")
+      .replace(/^[\s$€]+|[\s$€]+$/g, "")
       .replace(/\s+(?:eur|euros|\u20ac)\s*$/i, "")
       .trim();
     if (!value) continue;
@@ -582,46 +824,46 @@ function mergeBaseFieldsWithVendor(base, vendorResult) {
 }
 
 // Deterministic invoice-field extractor. Runs over already-extracted text,
-// before any PII redaction pass on the free text. Every value is a plain
-// string, every parse path is regex-only, every result is labeled untrusted.
-export function extractInvoiceFields(text) {
-  const input = typeof text === "string" ? text : "";
-  const matched = [];
+  // before any PII redaction pass on the free text. Every value is a plain
+  // string, every parse path is regex-only, every result is labeled untrusted.
+  export function extractInvoiceFields(text) {
+    const input = typeof text === "string" ? text : "";
+    const matched = [];
 
-  const invoiceDate = sliceDateValue(input, LABEL_INVOICE_DATE_RE);
-  if (invoiceDate) matched.push(makeMatchedField("invoiceDate", invoiceDate));
+    const invoiceDate = sliceDateValue(input, LABEL_INVOICE_DATE_RE);
+    if (invoiceDate) matched.push(makeMatchedField("invoiceDate", invoiceDate));
 
-  const simplifiedInvoiceDate = sliceDateValue(input, LABEL_SIMPLIFIED_DATE_RE);
-  if (simplifiedInvoiceDate)
-    matched.push(makeMatchedField("simplifiedInvoiceDate", simplifiedInvoiceDate));
+    const simplifiedInvoiceDate = sliceDateValue(input, LABEL_SIMPLIFIED_DATE_RE);
+    if (simplifiedInvoiceDate)
+      matched.push(makeMatchedField("simplifiedInvoiceDate", simplifiedInvoiceDate));
 
-  const invoiceNumber = sliceInvoiceNumber(input);
-  if (invoiceNumber) matched.push(makeMatchedField("invoiceNumber", invoiceNumber));
+    const invoiceNumber = sliceInvoiceNumber(input);
+    if (invoiceNumber) matched.push(makeMatchedField("invoiceNumber", invoiceNumber));
 
-  const subtotal = sliceAmount(input, LABEL_SUBTOTAL_RE);
-  if (subtotal) matched.push(makeMatchedField("subtotal", subtotal));
+    const subtotal = sliceAmount(input, LABEL_SUBTOTAL_RE);
+    if (subtotal) matched.push(makeMatchedField("subtotal", subtotal));
 
-  const taxLabel = sliceTaxLabel(input);
-  if (taxLabel) matched.push(makeMatchedField("taxLabel", taxLabel));
+    const taxLabel = sliceTaxLabel(input);
+    if (taxLabel) matched.push(makeMatchedField("taxLabel", taxLabel));
 
-  const tax = sliceAmount(input, LABEL_TAX_RE);
-  if (tax) matched.push(makeMatchedField("tax", tax));
+    const tax = sliceAmount(input, LABEL_TAX_RE);
+    if (tax) matched.push(makeMatchedField("tax", tax));
 
-  const total = sliceAmount(input, LABEL_TOTAL_RE);
-  if (total) matched.push(makeMatchedField("total", total));
+    const total = sliceAmount(input, LABEL_TOTAL_RE);
+    if (total) matched.push(makeMatchedField("total", total));
 
-  return {
-    invoiceDate,
-    simplifiedInvoiceDate,
-    invoiceNumber,
-    taxLabel,
-    totals: { subtotal, tax, total },
-    matched,
-    labels: INVOICE_LABEL_HINT,
-    untrusted: true,
-    trustBoundary: INVOICE_UNTRUSTED,
-  };
-}
+    return {
+      invoiceDate,
+      simplifiedInvoiceDate,
+      invoiceNumber,
+      taxLabel,
+      totals: { subtotal, tax, total },
+      matched,
+      labels: INVOICE_LABEL_HINT,
+      untrusted: true,
+      trustBoundary: INVOICE_UNTRUSTED,
+    };
+  }
 
 // Merge vendor-specific extraction into the generic fields. Vendor matches
 // override the generic base field-by-field and extend the matched list, so a
@@ -701,12 +943,17 @@ export async function extractTextFromPdf(buffer, options = {}) {
     throw new PdfExtractionError("PDF extraction was cancelled", "pdf_cancelled");
   }
 
-  // Lazy import: pdfjs-dist is heavy and we want validation errors to surface
+   // Lazy import: pdfjs-dist is heavy and we want validation errors to surface
   // before any worker setup happens.
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
+  // pdfjs-dist may transfer the backing store it receives. Keep caller-owned
+  // bytes intact because the OCR fallback needs to read the same PDF next.
+  const pdfInput = cloneBuffer(buffer);
+  const uint8 = new Uint8Array(pdfInput.buffer, pdfInput.byteOffset, pdfInput.byteLength);
+
   const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(cloneBuffer(buffer)),
+    data: uint8,
     isEvalSupported: false,
     disableFontFace: true,
     useSystemFonts: false,

@@ -78,6 +78,20 @@ const RESPONSE_PII_PATTERNS = Object.freeze([
 // Hard cap on every string field in an AuditEvent. Keeps a malicious or
 // buggy caller from sneaking document content into an opaque ID slot.
 const AUDIT_STRING_FIELD_MAX = 256;
+const DISPOSAL_OUTCOMES = new Set([
+  "declined",
+  "cancelled",
+  "expired",
+  "consumed",
+  "success",
+  "invalid",
+  "timeout",
+  "process_loss",
+  "restart_failure",
+  "shutdown",
+  "mismatch",
+  "terminal",
+]);
 
 // === Audit event kinds ===================================================
 
@@ -635,8 +649,41 @@ export class PrivacyTransactionService {
     this._providerRegistry = providerRegistry ?? createDefaultProviderRegistry();
     this._transactionTtlMs = transactionTtlMs;
     this._transactions = new Map();
+    this._disposalCounts = new Map();
     this._shutdownHandlers = [];
     if (enableShutdownHooks) this._registerShutdownHooks();
+  }
+
+  _disposeTransaction(transactionId, outcome = "terminal") {
+    const tx = this._transactions.get(transactionId);
+    if (!tx) return false;
+    if (!DISPOSAL_OUTCOMES.has(outcome)) outcome = "terminal";
+    if (Buffer.isBuffer(tx.payloadBytes) || tx.payloadBytes instanceof Uint8Array) {
+      tx.payloadBytes.fill(0);
+    }
+    tx.payloadBytes = null;
+    tx.pseudonymizer = null;
+    tx.localFields = null;
+    tx.documentSha256 = null;
+    this._transactions.delete(transactionId);
+    this._disposalCounts.set(outcome, (this._disposalCounts.get(outcome) ?? 0) + 1);
+    return true;
+  }
+
+  // Public terminal cleanup hook for provider/engine adapters. Once
+  // removed, a transaction cannot be recovered or reused by a later
+  // request.
+  disposeTransaction(transactionId, { outcome = "terminal" } = {}) {
+    return this._disposeTransaction(transactionId, outcome);
+  }
+
+  get disposalDiagnostics() {
+    return {
+      disposedCount: [...this._disposalCounts.values()].reduce((sum, count) => sum + count, 0),
+      outcomes: Object.fromEntries(
+        [...this._disposalCounts.entries()].sort(([a], [b]) => a.localeCompare(b)),
+      ),
+    };
   }
 
   // === Lifecycle hooks ===================================================
@@ -653,14 +700,14 @@ export class PrivacyTransactionService {
   _registerShutdownHooks() {
     const onExit = () => {
       try {
-        this._transactions.clear();
+        this.clear("shutdown");
       } catch {
         /* best effort */
       }
     };
     const onSignal = () => {
       try {
-        this._transactions.clear();
+        this.clear("shutdown");
       } catch {
         /* best effort */
       }
@@ -690,7 +737,7 @@ export class PrivacyTransactionService {
       }
     }
     this._shutdownHandlers.length = 0;
-    this._transactions.clear();
+    this.clear("shutdown");
   }
 
   // === Prepare ==========================================================
@@ -887,7 +934,7 @@ export class PrivacyTransactionService {
 
     const now = Date.now();
     if (now >= tx.expiresAtMs) {
-      this._transactions.delete(transactionId);
+      this._disposeTransaction(transactionId, "expired");
       this._auditSink.emit({
         kind: AuditEvent.TX_EXPIRED,
         operationCorrelationId: requestId,
@@ -905,7 +952,7 @@ export class PrivacyTransactionService {
     // to the stored sha256. If the in-memory transaction was tampered with
     // after prepare, reject before any provider action.
     if (sha256Hex(tx.payloadBytes) !== tx.payloadSha256) {
-      this._transactions.delete(transactionId);
+      this._disposeTransaction(transactionId, "mismatch");
       this._auditSink.emit({
         kind: AuditEvent.TX_MISMATCH,
         operationCorrelationId: requestId,
@@ -927,7 +974,7 @@ export class PrivacyTransactionService {
       (modelId != null && modelId !== tx.modelId) ||
       (purpose != null && purpose !== tx.purpose)
     ) {
-      this._transactions.delete(transactionId);
+      this._disposeTransaction(transactionId, "mismatch");
       this._auditSink.emit({
         kind: AuditEvent.TX_MISMATCH,
         operationCorrelationId: requestId,
@@ -955,7 +1002,7 @@ export class PrivacyTransactionService {
         );
       }
       if (documentSha256 !== tx.documentSha256) {
-        this._transactions.delete(transactionId);
+        this._disposeTransaction(transactionId, "mismatch");
         this._auditSink.emit({
           kind: AuditEvent.TX_MISMATCH,
           operationCorrelationId: requestId,
@@ -984,7 +1031,7 @@ export class PrivacyTransactionService {
         sha256Hex(recomputedBytes) !== tx.payloadSha256 ||
         recomputedBytes.length !== tx.payloadBytes.length
       ) {
-        this._transactions.delete(transactionId);
+        this._disposeTransaction(transactionId, "mismatch");
         this._auditSink.emit({
           kind: AuditEvent.TX_MISMATCH,
           operationCorrelationId: requestId,
@@ -1172,12 +1219,25 @@ export class PrivacyTransactionService {
     });
   }
 
-  // === Cancellation / cleanup ==========================================
+      // One-shot response boundary. It keeps the reverse map available only
+      // during validation, then disposes it for both valid and invalid output.
+      completeProviderResponse(args = {}) {
+        try {
+          const result = this.validateProviderResponse(args);
+          this._disposeTransaction(args.transactionId, "success");
+          return result;
+        } catch (error) {
+          this._disposeTransaction(args.transactionId, "invalid");
+          throw error;
+        }
+      }
 
-  cancelTransaction(transactionId, { operationCorrelationId } = {}) {
+      // === Cancellation / cleanup ==========================================
+
+      cancelTransaction(transactionId, { operationCorrelationId } = {}) {
     const tx = this._transactions.get(transactionId);
     if (!tx) return false;
-    this._transactions.delete(transactionId);
+    this._disposeTransaction(transactionId, "cancelled");
     // The audit schema requires a non-empty operationCorrelationId. If
     // the caller did not pass one, fall back to a synthetic ID derived
     // from the transaction — the audit consumer can still correlate
@@ -1198,8 +1258,9 @@ export class PrivacyTransactionService {
     let removed = 0;
     for (const [id, tx] of this._transactions) {
       if (now >= tx.expiresAtMs) {
-        this._transactions.delete(id);
-        if (!tx.consumed) {
+        const wasConsumed = tx.consumed;
+        this._disposeTransaction(id, "expired");
+        if (!wasConsumed) {
           this._auditSink.emit({
             kind: AuditEvent.TX_EXPIRED,
             operationCorrelationId: `auto-cleanup:${id}`,
@@ -1214,12 +1275,15 @@ export class PrivacyTransactionService {
     return removed;
   }
 
-  clear() {
-    this._transactions.clear();
+  clear(outcome = "terminal") {
+    for (const transactionId of this._transactions.keys()) {
+      this._disposeTransaction(transactionId, outcome);
+    }
   }
 
   getTransaction(transactionId) {
-    return this._transactions.get(transactionId) ?? null;
+    const transaction = this._transactions.get(transactionId);
+    return transaction && !transaction.consumed ? transaction : null;
   }
 
   get size() {

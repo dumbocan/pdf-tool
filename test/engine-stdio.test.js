@@ -11,6 +11,8 @@ import { parseFrame } from "../src/engine-protocol.js";
 // Real PDF fixture for extraction success tests
 const PDF_FIXTURE = "test/fixtures/A-G2026-245895.pdf";
 const PDF_FIXTURE_BYTES = readFileSync(PDF_FIXTURE);
+const OCR_PDF_FIXTURE = "test/fixtures/ocr-placeholder-image.pdf";
+const NELUPDF_OCR_FIXTURE = "/home/jmon/nelupdf/test/fixtures/invoice-learning/synthetic.ocr-first-flow.pdf";
 
 // Fake PDF for protocol/extraction-failure tests
 const PDF_FAKE = Buffer.from("%PDF-1.4 fake minimal test content for engine-stdio");
@@ -112,6 +114,7 @@ describe("WU-1C2 engine-stdio ocr_required_unavailable", () => {
     const req = makeValidRequest(PDF_FAKE);
     const { json } = await runAdapterWithRequest(req);
     if (json.error) {
+      assert.equal(json.status, "error");
       assert.match(json.error, /pdf_parse|pdf_invalid|base64/);
     } else {
       assert.equal(json.status, "partial");
@@ -119,3 +122,51 @@ describe("WU-1C2 engine-stdio ocr_required_unavailable", () => {
     }
   });
 });
+
+    describe("local OCR for image-only PDFs", () => {
+      it("runs OCR on page 1 when digital extraction is empty", async () => {
+        const pdfBytes = readFileSync(OCR_PDF_FIXTURE);
+        const { code, json, stderr } = await runAdapterWithRequest(makeValidRequest(pdfBytes));
+
+        assert.equal(code, 0, stderr);
+        assert.equal(json.status, "ok");
+        assert.equal(json.extractionMode, "ocr");
+        assert.equal(json.pages, 1);
+        assert.ok(typeof json.text === "string" && json.text.length > 0);
+        assert.ok(json.text.includes("NIF"));
+        assert.ok(json.text.includes("TOTAL"));
+        assert.equal(json.untrusted, true);
+      });
+
+      it("direct learned extraction invokes local tools and returns bounded OCR evidence", async () => {
+        const pdfBytes = readFileSync(NELUPDF_OCR_FIXTURE);
+        const request = {
+          ...makeValidRequest(pdfBytes),
+          kind: "extractInvoiceV1",
+          operationCorrelationId: "cor_00000000000000000000000000000000",
+          capability: "invoice_learning_v1",
+          invoiceEvidenceSchemaVersion: "1",
+          document: {
+            ...makeValidRequest(pdfBytes).document,
+            documentId: "a".repeat(22),
+          },
+          limits: { maxPages: 100, maxChars: 80_000 },
+        };
+        const { code, json, stderr } = await runAdapterWithRequest(request);
+
+        assert.equal(code, 0, stderr);
+        assert.equal(json.status, "ok");
+        assert.equal(json.data.extractionMode, "OCR");
+        assert.equal(json.data.recordOutcome, "REVIEW_REQUIRED");
+        assert.equal(json.data.untrusted, true);
+        assert.equal(json.data.record.lineItems.length, 3);
+        const evidence = json.data.record.lineItems.flatMap((row) =>
+          [row.description, row.quantity, row.unitPrice].flatMap((cell) => cell.evidence ?? []));
+        assert.ok(evidence.length > 0);
+        for (const fragment of evidence) {
+          assert.ok(fragment.rect.x >= 0 && fragment.rect.x + fragment.rect.width <= 10_000);
+          assert.ok(fragment.rect.y >= 0 && fragment.rect.y + fragment.rect.height <= 10_000);
+          assert.match(fragment.localRef.tokenId, /^t_[0-9a-f]{16}$/);
+        }
+      });
+    });

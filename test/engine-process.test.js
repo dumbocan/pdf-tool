@@ -10,6 +10,8 @@ const PDF_FIXTURE = "test/fixtures/A-G2026-245895.pdf";
 const PDF_FIXTURE_BYTES = readFileSync(PDF_FIXTURE);
 const PDF_FAKE = Buffer.from("%PDF-1.4 fake minimal test content for engine-stdio");
 const NETWORK_DENY = "./test/fixtures/network-deny.mjs";
+const ENGINE_ENTRYPOINT = "bin/pdf-tool-engine.mjs";
+const PACKAGE = JSON.parse(readFileSync("package.json", "utf8"));
 const REQ_ID = "550e8400-e29b-41d4-a716-446655440000";
 
 function makeRequest(pdf = PDF_FAKE, overrides = {}) {
@@ -35,9 +37,9 @@ function frameMessage(obj) {
 }
 
 function runAdapter(inputBuf, opts = {}) {
-  const { extraEnv = {}, nodeOptions = [] } = opts;
+  const { extraEnv = {}, nodeOptions = [], entrypoint = ENGINE_ENTRYPOINT } = opts;
   return new Promise((resolve) => {
-    const proc = spawn("node", [...nodeOptions, "src/engine-stdio.js"], {
+    const proc = spawn(process.execPath, [...nodeOptions, entrypoint], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...extraEnv },
     });
@@ -66,6 +68,49 @@ async function loadFrameResponse() {
 }
 
 // === WU-1C3: frameResponse caps response at MAX_RESPONSE_BYTES ===
+
+describe("pdf-tool-engine package entrypoint", () => {
+  it("exposes one stable executable bin and preserves the v1 response contract", async () => {
+    assert.equal(PACKAGE.bin["pdf-tool-engine"], ENGINE_ENTRYPOINT);
+    const { code, json } = await runWith(makeRequest(PDF_FAKE), {
+      entrypoint: ENGINE_ENTRYPOINT,
+    });
+    assert.equal(code, 0);
+    assert.equal(json?.protocolVersion, 1);
+    assert.equal(json?.kind, "extractLocal");
+  });
+
+  it("preserves protocol-version errors through the stable executable", async () => {
+    const { code, json } = await runWith(
+      makeRequest(PDF_FAKE, { protocolVersion: 2 }),
+      { entrypoint: ENGINE_ENTRYPOINT },
+    );
+    assert.equal(code, 0);
+    assert.equal(json?.status, "error");
+    assert.equal(json?.error, "protocol_version");
+  });
+
+  it("maps invalid PDF validation and parse failures to typed error envelopes", async () => {
+    const invalidPdf = await runWith(makeRequest(Buffer.from("not a PDF")));
+    assert.equal(invalidPdf.code, 0);
+    assert.equal(invalidPdf.json?.status, "error");
+    assert.match(invalidPdf.json?.error ?? "", /^pdf_invalid/);
+
+    const parseFailure = await runWith(makeRequest(PDF_FAKE));
+    assert.equal(parseFailure.code, 0);
+    assert.equal(parseFailure.json?.status, "error");
+    assert.equal(parseFailure.json?.error, "pdf_parse_failed");
+  });
+
+  it("maps invalid base64 validation to a typed error envelope", async () => {
+    const request = makeRequest(PDF_FAKE);
+    request.document.pdfBase64 = "not-base64";
+    const { code, json } = await runWith(request);
+    assert.equal(code, 0);
+    assert.equal(json?.status, "error");
+    assert.equal(json?.error, "invalid_base64");
+  });
+});
 
 describe("WU-1C3 frameResponse caps at MAX_RESPONSE_BYTES", () => {
   it("does not throw when payload exceeds 1 MB; returns capped buffer", async () => {
@@ -219,5 +264,14 @@ describe("WU-1C3 crash handling, EOF, stream separation", () => {
     const { json } = parseFrame(stdout);
     assert.ok(json, "stdout must be a valid frame even with stderr activity");
     assert.ok(stderr.length > 0, "stderr should have the stripping notice");
+  });
+
+  it("returns a bounded response instead of crashing on a valid large request", async () => {
+    const largePdf = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(3_200_000, "x")]);
+    const { code, json, stderr } = await runWith(makeRequest(largePdf));
+    assert.equal(code, 0);
+    assert.equal(json?.error, "pdf_parse_failed");
+    assert.match(stderr, /NELUPDF_DIAG /);
+    assert.match(stderr, /response_failed/);
   });
 });

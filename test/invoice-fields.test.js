@@ -4,6 +4,7 @@ import {
   extractInvoiceFields,
   INVOICE_FIELD_LIMITS,
   INVOICE_LABEL_HINT,
+  isInvoiceLikeText,
 } from "../src/extract.js";
 
 test("extractInvoiceFields returns structured fields for a typical Mercadona simplified invoice", () => {
@@ -198,6 +199,47 @@ test("sliceDateValue finds date on the line after the label when PDF splits them
   assert.equal(fields.invoiceDate, "2026-07-27");
   // Date is on next line — new sliceDateValue spots it across lines
   assert.ok(matchedLabels(fields).includes("invoiceDate"));
+});
+
+test("extractInvoiceFields handles OCR label variants, split values, and amount-before-label layout", () => {
+  const text = [
+    "Invoice date",
+    "15/06/2026",
+    "N.o de factura: EN-2026-7",
+    "100,00 Subtotal",
+    "Tax",
+    "21.00",
+    "Amount due",
+    "121,00",
+  ].join("\n");
+  const fields = extractInvoiceFields(text);
+  assert.equal(fields.invoiceDate, "2026-06-15");
+  assert.equal(fields.invoiceNumber, "EN-2026-7");
+  assert.equal(fields.totals.subtotal, "100.00");
+  assert.equal(fields.totals.tax, "21.00");
+  assert.equal(fields.totals.total, "121.00");
+});
+
+test("extractInvoiceFields normalizes OCR diacritics without weakening invoice anchors", () => {
+  const fields = extractInvoiceFields([
+    "Nº de factura: ES-9",
+    "Fecha de emisión: 01.02.2026",
+    "Total: 10,00 EUR",
+  ].join("\n"));
+  assert.equal(fields.invoiceNumber, "ES-9");
+  assert.equal(fields.invoiceDate, "2026-02-01");
+  assert.equal(fields.totals.total, "10.00");
+
+  const nonInvoice = extractInvoiceFields("Account statement\nTotal: 10,00 EUR\n");
+  assert.equal(nonInvoice.invoiceNumber, null);
+  assert.equal(nonInvoice.invoiceDate, null);
+});
+
+test("isInvoiceLikeText rejects financial documents without an invoice identity anchor", () => {
+  assert.equal(isInvoiceLikeText("Bank statement\nDate 01/02/2026\nTotal: 10,00 EUR"), false);
+  assert.equal(isInvoiceLikeText("Payroll\nDate 01/02/2026\nTotal: 10,00 EUR"), false);
+  assert.equal(isInvoiceLikeText("Settlement\nTax: 10,00 EUR\nTotal: 121,00"), false);
+  assert.equal(isInvoiceLikeText("Invoice no: X-1\nInvoice date: 01/02/2026\nTotal: 10,00 EUR"), true);
 });
 
 test("INVOICE_LABEL_HINT surfaces the labels it scans so the agent prompt can quote them", () => {

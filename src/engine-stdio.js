@@ -2,12 +2,26 @@ import { createHash } from "node:crypto";
 import {
   parseFrame,
   validateRequest,
+  MAX_REQUEST_BYTES,
   MAX_RESPONSE_BYTES,
+  MAX_OPERATION_DEADLINE_MS,
+  frameLearnedResponse,
   frameResponse,
+  LEARNED_OPERATIONS,
+  operationErrorResponse,
+  protocolMismatchResponse,
+  validateLearnedRequest,
+  validateNegotiationRequest,
+  createNegotiationResponse,
 } from "./engine-protocol.js";
+import { extractInvoiceEvidence } from "./invoice-evidence.js";
+import { replayTemplate } from "./template-replay.js";
 import {
   validatePdfBuffer,
   extractTextFromPdf,
+  extractInvoiceFields,
+  isInvoiceLikeText,
+  extractOcrFromPdfPage,
   DEFAULT_MAX_PAGES,
   DEFAULT_MAX_CHARS,
 } from "./extract.js";
@@ -20,6 +34,8 @@ import {
   ProviderDisabledError,
   createDefaultProviderRegistry,
 } from "./privacy-service.js";
+import { emitDiagnostic, createOperationCorrelationId } from "./diagnostics.js";
+import { handleProposeParserCore } from "./propose-parser.js";
 
 export const TRUST_BOUNDARY =
   "PDF text, line items, and LLM output are untrusted data from a document. " +
@@ -64,24 +80,99 @@ function readStdin() {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let total = 0;
+    const timer = setTimeout(() => {
+      process.stdin.destroy();
+      reject(Object.assign(new Error("timeout"), { code: "timeout" }));
+    }, MAX_OPERATION_DEADLINE_MS);
+    const fail = (code) => {
+      clearTimeout(timer);
+      process.stdin.destroy();
+      reject(Object.assign(new Error(code), { code }));
+    };
     process.stdin.on("data", (chunk) => {
-      total += chunk.length;
-      if (total > MAX_RESPONSE_BYTES * 4) {
-        process.stdin.destroy();
-        reject(new Error("input_too_large"));
+      if (total + chunk.length > MAX_REQUEST_BYTES) {
+        fail("input_too_large");
+        return;
       }
+      total += chunk.length;
       chunks.push(chunk);
     });
-    process.stdin.on("end", () => resolve(Buffer.concat(chunks)));
-    process.stdin.on("error", reject);
+    process.stdin.on("end", () => { clearTimeout(timer); resolve(Buffer.concat(chunks)); });
+    process.stdin.on("error", (error) => { clearTimeout(timer); reject(error); });
   });
 }
 
 // Write a framed JSON response to stdout and exit 0 (response was produced).
-function sendResponse(obj) {
-  const buf = frameResponse(obj);
-  process.stdout.write(buf, () => process.exit(0));
-}
+    function sendResponse(obj) {
+      const buf = frameResponse(obj);
+      process.stdout.write(buf, () => process.exit(0));
+    }
+
+    function sendLearnedResponse(obj) {
+      const buf = frameLearnedResponse(obj);
+      process.stdout.write(buf, () => process.exit(0));
+    }
+
+    function normalizeInvoiceEvidenceWire(evidence) {
+      const modes = { digital_text: "DIGITAL_TEXT", ocr: "OCR", ocr_required_unavailable: "OCR_REQUIRED_UNAVAILABLE" };
+      if (!evidence || typeof evidence !== "object") return evidence;
+      const extractionMode = modes[evidence.extractionMode] ?? evidence.extractionMode;
+      return extractionMode === evidence.extractionMode ? evidence : { ...evidence, extractionMode };
+    }
+
+    function normalizeLearnedData(kind, data) {
+      if (kind === "extractInvoiceV1") return normalizeInvoiceEvidenceWire(data);
+      if (kind === "replayTemplateV1" && data?.invoiceEvidence) return { ...data, invoiceEvidence: normalizeInvoiceEvidenceWire(data.invoiceEvidence) };
+      return data;
+    }
+
+    async function handleLearnedOperation(request) {
+      if (!["extractInvoiceV1", "replayTemplateV1"].includes(request.kind)) {
+        return sendLearnedResponse(operationErrorResponse(request, "unsupported_input"));
+      }
+
+      let decoded;
+      try {
+        decoded = Buffer.from(request.document.pdfBase64, "base64");
+        validatePdfBuffer(decoded);
+        if (createHash("sha256").update(decoded).digest("hex") !== request.document.sha256) throw Object.assign(new Error("hash_mismatch"), { code: "schema_invalid" });
+      } catch (error) {
+        return sendLearnedResponse(operationErrorResponse(request, error?.code ?? "invalid_request"));
+      }
+
+      if (request.kind === "replayTemplateV1") {
+        try {
+          const invoiceEvidence = await extractInvoiceEvidence(decoded, { documentId: request.document.documentId });
+          return sendLearnedResponse({ protocolVersion: 1, kind: request.kind, requestId: request.requestId, status: "ok", data: normalizeLearnedData(request.kind, replayTemplate(invoiceEvidence, request.template)) });
+        } catch (error) {
+          return sendLearnedResponse(operationErrorResponse(request, error?.code === "template_invalid" ? "template_invalid" : "engine_lost"));
+        }
+      }
+
+      const controller = new AbortController();
+      const deadline = new Promise((_, reject) => {
+        setTimeout(() => {
+          controller.abort();
+          reject(Object.assign(new Error("timeout"), { code: "timeout" }));
+        }, MAX_OPERATION_DEADLINE_MS).unref();
+      });
+      try {
+        const evidence = await Promise.race([
+          extractInvoiceEvidence(Buffer.from(decoded), { documentId: request.document.documentId, signal: controller.signal }),
+          deadline,
+        ]);
+        return sendLearnedResponse({
+          protocolVersion: 1,
+          kind: request.kind,
+          requestId: request.requestId,
+          status: "ok",
+          data: normalizeLearnedData(request.kind, evidence),
+        });
+      } catch (error) {
+        const code = error?.code === "timeout" ? "timeout" : "engine_lost";
+        return sendLearnedResponse(operationErrorResponse(request, code));
+      }
+    }
 
 // Build a normalized privacy transaction envelope for the sidecar response.
 // The Rust client maps `provider_disabled` to the typed `ProviderDisabled`
@@ -104,6 +195,38 @@ function privacyErrorEnvelope(request, kind, code, message) {
     requestId: request.requestId,
     status: "error",
     error: { code, message: String(message ?? code) },
+  };
+}
+
+function extractionErrorEnvelope(request, code, message) {
+  return {
+    protocolVersion: 1,
+    kind: "extractLocal",
+    requestId: request.requestId,
+    status: "error",
+    error: code,
+    message: String(message ?? code),
+  };
+}
+
+function boundedExtractionError(request, unit, count, correlation, startedAt) {
+  emitDiagnostic("response_failed", "failed", {
+    errorCode: "capacity_exhausted",
+    ...(unit === "pages" ? { pages: count } : {}),
+    ...(unit === "characters" ? { chars: count } : {}),
+  }, correlation, Date.now() - startedAt);
+  return {
+    protocolVersion: 1,
+    kind: "extractLocal",
+    requestId: request.requestId,
+    operationCorrelationId: correlation,
+    status: "error",
+    error: {
+      code: "bounded_resource",
+      messageKey: "bounded_resource",
+      retry: "user_action",
+      safeContext: { limit: unit === "pages" ? 100 : 80_000, unit, capability: "invoice_learning_v1" },
+    },
   };
 }
 
@@ -263,9 +386,11 @@ function normalizeResult(buffer, extracted, request) {
     parser,
     parserStats: parsed.stats,
     source,
+    extractionMode: extracted?.extractionMode ?? "digital_text",
     confidence: "deterministic",
     sha256: createHash("sha256").update(buffer).digest("hex"),
     trustBoundary: TRUST_BOUNDARY,
+    untrusted: true,
   };
 }
 
@@ -293,10 +418,13 @@ function normalizeScanned(buffer, request, reason) {
 }
 
 async function main() {
+  const startedAt = Date.now();
+  let operationCorrelationId = createOperationCorrelationId();
   let raw;
   try {
     raw = await readStdin();
-  } catch {
+  } catch (error) {
+    emitDiagnostic("response_failed", "failed", { errorCode: error?.code === "input_too_large" ? "response_too_large" : error?.code === "timeout" ? "timeout" : "internal" }, operationCorrelationId, Date.now() - startedAt);
     process.exit(1);
   }
 
@@ -306,13 +434,37 @@ async function main() {
     const { json } = parseFrame(raw);
     request = json;
   } catch {
+    emitDiagnostic("response_failed", "failed", { errorCode: "protocol_mismatch" }, operationCorrelationId, Date.now() - startedAt);
     process.exit(1);
   }
+      operationCorrelationId = request.operationCorrelationId ?? operationCorrelationId;
+      emitDiagnostic("sidecar_started", "started", {}, operationCorrelationId, Date.now() - startedAt);
 
-  // Validation errors: produce an error response (exit 0, response written).
-  try {
-    validateRequest(request);
-  } catch (e) {
+      if (request.kind === "negotiateInvoiceLearning") {
+        try {
+          validateNegotiationRequest(request);
+          return sendResponse(createNegotiationResponse(request));
+        } catch {
+          return sendResponse(protocolMismatchResponse(request));
+        }
+      }
+
+      if (LEARNED_OPERATIONS.includes(request.kind)) {
+        try {
+          validateLearnedRequest(request);
+        } catch (error) {
+          return sendLearnedResponse(error?.code === "protocol_mismatch"
+            ? protocolMismatchResponse(request)
+            : operationErrorResponse(request, error?.code ?? "schema_invalid"));
+        }
+        return handleLearnedOperation(request);
+      }
+
+      // Validation errors: produce an error response (exit 0, response written).
+      try {
+        validateRequest(request);
+      } catch (e) {
+    emitDiagnostic("response_failed", "failed", { errorCode: "invalid_request" }, operationCorrelationId, Date.now() - startedAt);
     return sendResponse({
       protocolVersion: 1,
       kind: typeof request?.kind === "string" ? request.kind : "extractLocal",
@@ -323,70 +475,142 @@ async function main() {
     });
   }
 
-  // Privacy transaction sidecar: branched off the validated `kind` so the
-  // privacy entry point never touches the document path. The provider
-  // registry defaults to `disabled`, so prepare() throws
-  // ProviderDisabledError before any payload is built. The Rust client maps
-  // the envelope to the typed `ProviderDisabled` public error.
-  if (request.kind === "prepareLlmExtraction") {
-    return sendResponse(handlePrepareLlmExtraction(request));
-  }
-  if (request.kind === "confirmLlmExtraction") {
-    return sendResponse(handleConfirmLlmExtraction(request));
-  }
-  if (request.kind === "validateLlmResponse") {
-    return sendResponse(handleValidateLlmResponse(request));
-  }
+      // Privacy transaction sidecar: branched off the validated `kind` so the
+      // privacy entry point never touches the document path. The provider
+      // registry defaults to `disabled`, so prepare() throws
+      // ProviderDisabledError before any payload is built. The Rust client maps
+      // the envelope to the typed `ProviderDisabled` public error.
+      if (request.kind === "prepareLlmExtraction") {
+        return sendResponse(handlePrepareLlmExtraction(request));
+      }
+      if (request.kind === "confirmLlmExtraction") {
+        return sendResponse(handleConfirmLlmExtraction(request));
+      }
+      if (request.kind === "validateLlmResponse") {
+        return sendResponse(handleValidateLlmResponse(request));
+      }
+      // LLM-assisted parser suggestion (Phase 2 of llm-assisted-parser-anonymized).
+      // The provider registry defaults to disabled; the handler core re-sanitizes
+      // and re-audits before egress and returns the typed error vocabulary.
+      if (request.kind === "proposeParserV1") {
+        const registry = createDefaultProviderRegistry();
+        const providerStatus = request.providerId ? registry.get(request.providerId) : { status: "disabled", reason: "release_gate_pending" };
+        const auditSink = new AuditSink();
+        const proposal = handleProposeParserCore(request, {
+          providerStatus,
+          audit: auditSink,
+        });
+        if (proposal instanceof Promise) {
+          return proposal.then((result) => {
+            if (result.status === "ok") return sendResponse(privacySuccessEnvelope(request, "proposeParserV1", result.data));
+            return sendResponse(privacyErrorEnvelope(request, "proposeParserV1", result.error.code, result.error.message));
+          });
+        }
+        if (proposal.status === "ok") return sendResponse(privacySuccessEnvelope(request, "proposeParserV1", proposal.data));
+        return sendResponse(privacyErrorEnvelope(request, "proposeParserV1", proposal.error.code, proposal.error.message));
+      }
 
   // Decode base64 PDF.
   let decoded;
   try {
     decoded = Buffer.from(request.document.pdfBase64, "base64");
   } catch {
-    return sendResponse({ error: "base64_decode_failed", message: "invalid base64" });
+    return sendResponse(extractionErrorEnvelope(request, "base64_decode_failed", "invalid base64"));
   }
 
   // Validate PDF buffer (magic bytes, size bounds).
   try {
     validatePdfBuffer(decoded);
+    emitDiagnostic("pdf_validated", "success", { bytes: decoded.length }, operationCorrelationId, Date.now() - startedAt);
+    emitDiagnostic("pdf_loaded", "success", {}, operationCorrelationId, Date.now() - startedAt);
   } catch (e) {
-    return sendResponse({ error: e.code || "pdf_invalid", message: e.message });
+    emitDiagnostic("response_failed", "failed", { errorCode: "pdf_invalid" }, operationCorrelationId, Date.now() - startedAt);
+    return sendResponse(extractionErrorEnvelope(request, e.code || "pdf_invalid", e.message));
   }
 
   // Extract text with limits from request.
   const maxPages = Number.isInteger(request.limits?.maxPages) ? request.limits.maxPages : DEFAULT_MAX_PAGES;
   const maxChars = Number.isInteger(request.limits?.maxChars) ? request.limits.maxChars : DEFAULT_MAX_CHARS;
   const controller = new AbortController();
+  let timedOut = false;
+  const deadlineTimer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, MAX_OPERATION_DEADLINE_MS);
 
   let extracted;
   try {
-    extracted = await extractTextFromPdf(decoded, {
+    // pdfjs may transfer the ArrayBuffer view it receives. Keep the original
+    // PDF bytes available for the subsequent OCR/hash path.
+    const digitalInput = Buffer.from(decoded);
+    extracted = await extractTextFromPdf(digitalInput, {
       maxPages: Math.min(maxPages, DEFAULT_MAX_PAGES),
       maxChars: Math.min(maxChars, DEFAULT_MAX_CHARS),
       signal: controller.signal,
     });
+    emitDiagnostic("digital_summary", "success", {
+      pages: extracted?.pages ?? 0,
+      chars: typeof extracted?.text === "string" ? extracted.text.length : 0,
+    }, operationCorrelationId, Date.now() - startedAt);
+    emitDiagnostic("page_progress", "success", { pages: extracted?.pages ?? 0 }, operationCorrelationId, Date.now() - startedAt);
+    emitDiagnostic("positional_grouped", "success", { lines: extracted?.invoiceFields?.matched?.length ?? 0 }, operationCorrelationId, Date.now() - startedAt);
   } catch (e) {
-    if (e?.code === "pdf_cancelled") {
-      return sendResponse({ error: "cancelled", message: "extraction was cancelled",
-        protocolVersion: 1, kind: "extractLocal", requestId: request.requestId });
+    clearTimeout(deadlineTimer);
+    if (timedOut) {
+      emitDiagnostic("response_failed", "failed", { errorCode: "timeout" }, operationCorrelationId, Date.now() - startedAt);
+      return sendResponse(extractionErrorEnvelope(request, "timeout", "operation timed out"));
     }
-    return sendResponse({
-      error: e.code || "pdf_parse_failed",
-      message: e.message,
-      protocolVersion: 1,
-      kind: "extractLocal",
-      requestId: request.requestId,
-    });
+    if (e?.code === "pdf_cancelled") {
+      return sendResponse(extractionErrorEnvelope(request, "cancelled", "extraction was cancelled"));
+    }
+    emitDiagnostic("extraction_failed", "failed", { errorCode: "pdf_parse_failed" }, operationCorrelationId, Date.now() - startedAt);
+    emitDiagnostic("response_failed", "failed", { errorCode: "pdf_parse_failed" }, operationCorrelationId, Date.now() - startedAt);
+    return sendResponse(extractionErrorEnvelope(request, e.code || "pdf_parse_failed", e.message));
+  }
+  clearTimeout(deadlineTimer);
+  if (extracted?.truncated) {
+    const unit = extracted.truncationReason?.includes("Pages") ? "pages" : "characters";
+    const count = unit === "pages" ? extracted.pages + 1 : Math.max(DEFAULT_MAX_CHARS + 1, extracted.text?.length ?? 0);
+    return sendResponse(boundedExtractionError(request, unit, count, operationCorrelationId, startedAt));
   }
 
-  // Scanned / no digital text → ocr_required_unavailable (never invokes OCR per design §5.4)
+  // Scanned / no digital text → bounded local OCR on page 1 only.
   const text = typeof extracted?.text === "string" ? extracted.text : "";
   if (text.trim().length === 0) {
-    return sendResponse(normalizeScanned(decoded, request, "no extractable digital text"));
+    emitDiagnostic("ocr_decision", "started", { extractionMode: "ocr" }, operationCorrelationId, Date.now() - startedAt);
+    emitDiagnostic("ocr_started", "started", { extractionMode: "ocr" }, operationCorrelationId, Date.now() - startedAt);
+    const ocr = await extractOcrFromPdfPage(decoded, 1);
+    if (ocr.error || !ocr.text.trim()) {
+      emitDiagnostic("ocr_failed", "failed", { errorCode: ocr.error ?? "ocr_empty" }, operationCorrelationId, Date.now() - startedAt);
+      emitDiagnostic("response_failed", "failed", { errorCode: ocr.error ?? "ocr_empty" }, operationCorrelationId, Date.now() - startedAt);
+      return sendResponse(normalizeScanned(decoded, request, ocr.error ?? "ocr_empty"));
+    }
+    emitDiagnostic("ocr_completed", "success", { pages: 1, chars: ocr.text.length, extractionMode: "ocr" }, operationCorrelationId, Date.now() - startedAt);
+    const fields = isInvoiceLikeText(ocr.text) ? extractInvoiceFields(ocr.text) : extractInvoiceFields("");
+    emitDiagnostic("fields_matched", "success", { matched: fields?.matched?.length ?? 0, bboxMissing: fields?.matched?.length ?? 0, matchedLabels: fields?.matched?.map((field) => field.label) ?? [] }, operationCorrelationId, Date.now() - startedAt);
+    return sendResponse(normalizeResult(decoded, {
+      text: ocr.text,
+      pages: 1,
+      truncated: ocr.text.length >= maxChars,
+      invoiceFields: fields,
+      extractionMode: "ocr",
+    }, request));
   }
 
   // Success: normalize and return.
-  sendResponse(normalizeResult(decoded, extracted, request));
+  const normalized = normalizeResult(decoded, extracted, request);
+  emitDiagnostic("parser_candidates", "success", { candidates: normalized.parserStats?.lineItemsDetected ?? 0 }, operationCorrelationId, Date.now() - startedAt);
+  emitDiagnostic("parser_selected", "success", { parserId: normalized.parser }, operationCorrelationId, Date.now() - startedAt);
+  emitDiagnostic("fields_matched", "success", {
+    matched: normalized.invoiceFields?.matched?.length ?? 0,
+    bboxPresent: normalized.invoiceFields?.matched?.filter((field) => field.bbox).length ?? 0,
+    bboxMissing: normalized.invoiceFields?.matched?.filter((field) => !field.bbox).length ?? 0,
+    matchedLabels: normalized.invoiceFields?.matched?.map((field) => field.label) ?? [],
+    parserId: normalized.parser,
+    extractionMode: normalized.extractionMode,
+  }, operationCorrelationId, Date.now() - startedAt);
+  emitDiagnostic("response_completed", "success", { pages: normalized.pages, chars: normalized.text.length }, operationCorrelationId, Date.now() - startedAt);
+  sendResponse(normalized);
 }
 
 main();

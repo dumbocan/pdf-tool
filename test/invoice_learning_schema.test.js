@@ -65,7 +65,7 @@ test("evidence, template, and proposal literals are closed and versioned", () =>
   const template = load("template");
   const proposal = load("proposal");
   assert.deepEqual(invoice.$defs.InvoiceEvidenceV1.properties.untrusted.const, true);
-  assert.equal(invoice.$defs.InvoiceEvidenceV1.properties.extractionMode.const, "DIGITAL_TEXT");
+  assert.deepEqual(invoice.$defs.InvoiceEvidenceV1.properties.extractionMode.enum, ["DIGITAL_TEXT", "OCR", "OCR_REQUIRED_UNAVAILABLE"]);
   assert.deepEqual(invoice.$defs.InvoiceEvidenceV1.properties.recordOutcome.enum, ["EXTRACTED_UNTRUSTED", "REVIEW_REQUIRED", "LOW_CONFIDENCE", "LAYOUT_MISMATCH", "UNSUPPORTED", "FAILURE", "PROTOCOL_MISMATCH"]);
   assert.deepEqual(template.$defs.TemplateV1.properties.templateSchemaVersion.const, "1");
   assert.deepEqual(template.$defs.TemplateV1.properties.executionPolicyVersion.const, "1");

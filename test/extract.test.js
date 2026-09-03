@@ -71,6 +71,32 @@ test("extractTextFromPdf returns sanitized text for a one-page PDF", async () =>
   assert.equal(result.truncated, false);
 });
 
+test("extractTextFromPdf merges Acastimar fields into matched entries", async () => {
+  const pdf = await buildPdfWithItems([
+    [
+      { text: "02-01-2099", x: 30, y: 750 },
+      { text: "Fecha", x: 110, y: 750 },
+      { text: "00000000", x: 30, y: 720 },
+      { text: "VENTA", x: 120, y: 720 },
+      { text: "Importe neto", x: 30, y: 690 },
+      { text: "BaseIVA", x: 130, y: 690 },
+      { text: "texto ".repeat(35), x: 30, y: 660 },
+      { text: "Importe Factura (EUR) :", x: 30, y: 630 },
+      { text: "123,45", x: 180, y: 630 },
+    ],
+  ]);
+  const result = await extractTextFromPdf(pdf, { maxPages: 5, maxChars: 10_000 });
+  const labels = result.invoiceFields.matched.map((field) => field.label);
+
+  assert.equal(result.invoiceFields.vendor, "acastimar");
+  assert.equal(result.invoiceFields.invoiceNumber, "00000000");
+  assert.equal(result.invoiceFields.invoiceDate, "2099-01-02");
+  assert.equal(result.invoiceFields.totals.subtotal, "123.45");
+  assert.equal(result.invoiceFields.totals.total, "123.45");
+  assert.equal(result.invoiceFields.totals.tax, null);
+  assert.deepEqual(labels.sort(), ["invoiceDate", "invoiceNumber", "subtotal", "total"]);
+});
+
 test("extractTextFromPdf caps page count at HARD_MAX_PAGES even when caller asks for more", async () => {
   // Build a PDF that would otherwise expose many pages if unbounded.
   const manyPages = Array.from({ length: 4 }, (_, i) => `Page ${i + 1}`);
