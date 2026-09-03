@@ -695,11 +695,74 @@ function makeMatchedFieldWithBbox(label, value, bbox) {
  * Lines that lack a bbox (e.g. when the caller passes synthetic text) fall
  * back to `bbox: null`, preserving the text-only contract.
  */
-export function extractInvoiceFieldsFromLines(lines) {
-  const input = Array.isArray(lines) ? lines : [];
-  const matched = [];
+    /**
+     * Build a merged label map following the priority chain:
+     * vendor-specific > universal ('') > default SCALAR_LABELS.
+     *
+     * @param {Array<{vendor:string,field:string,regex:string}>|null} scalarLabelsOverride
+     * @param {string|null} vendor  — detected vendor name (e.g. 'mercadona') or null
+     * @returns {{ invoiceDate: RegExp, invoiceNumber: RegExp, subtotal: RegExp, tax: RegExp, total: RegExp, simplifiedInvoiceDate?: RegExp }}
+     */
+    export function buildMergedLabels(scalarLabelsOverride, vendor) {
+      // Start with defaults
+      const merged = {
+        invoiceDate: LABEL_INVOICE_DATE_RE,
+        simplifiedInvoiceDate: LABEL_SIMPLIFIED_DATE_RE,
+        invoiceNumber: LABEL_INVOICE_NUMBER_RE,
+        subtotal: LABEL_SUBTOTAL_RE,
+        tax: LABEL_TAX_RE,
+        total: LABEL_TOTAL_RE,
+      };
+      if (!scalarLabelsOverride || !scalarLabelsOverride.length) return merged;
 
-  const invoiceDate = sliceDateValuePos(input, LABEL_INVOICE_DATE_RE);
+      // Split into universal ('') and vendor-specific
+      /** @type {Record<string, Record<string, string>>} */
+      const byVendor = {};
+      /** @type {Record<string, string>} */
+      const universal = {};
+      for (const ext of scalarLabelsOverride) {
+        if (!ext?.field || !ext?.regex) continue;
+        const field = ext.field.trim();
+        let pattern;
+        try {
+          pattern = new RegExp(ext.regex, 'i');
+        } catch {
+          continue; // skip invalid regex
+        }
+        if (ext.vendor === '' || ext.vendor == null) {
+          universal[field] = pattern;
+        } else {
+          if (!byVendor[ext.vendor]) byVendor[ext.vendor] = {};
+          byVendor[ext.vendor][field] = pattern;
+        }
+      }
+
+      // Apply: defaults → universal → vendor-specific
+      for (const [field, pattern] of Object.entries(universal)) {
+        if (field in merged) merged[field] = pattern;
+      }
+      if (vendor && byVendor[vendor]) {
+        for (const [field, pattern] of Object.entries(byVendor[vendor])) {
+          if (field in merged) merged[field] = pattern;
+        }
+      }
+      return merged;
+    }
+
+    /**
+     * Extract invoice fields from text lines.
+     *
+     * @param {Array<{text:string,bbox?:object}>} lines
+     * @param {{ scalarLabelsOverride?: Array<{vendor:string,field:string,regex:string}>, vendor?: string|null }} [options]
+     */
+    export function extractInvoiceFieldsFromLines(lines, options) {
+      const input = Array.isArray(lines) ? lines : [];
+      const matched = [];
+
+      // Build merged labels: default → universal → vendor-specific
+      const labels = buildMergedLabels(options?.scalarLabelsOverride ?? null, options?.vendor ?? null);
+
+      const invoiceDate = sliceDateValuePos(input, labels.invoiceDate);
   if (invoiceDate) {
     matched.push(
       makeMatchedFieldWithBbox("invoiceDate", invoiceDate.value, invoiceDate.bbox),
@@ -708,7 +771,7 @@ export function extractInvoiceFieldsFromLines(lines) {
 
   const simplifiedInvoiceDate = sliceDateValuePos(
     input,
-    LABEL_SIMPLIFIED_DATE_RE,
+    labels.simplifiedInvoiceDate,
   );
   if (simplifiedInvoiceDate) {
     matched.push(
@@ -722,7 +785,7 @@ export function extractInvoiceFieldsFromLines(lines) {
 
   const invoiceNumber = sliceLabelPos(
     input,
-    LABEL_INVOICE_NUMBER_RE,
+    labels.invoiceNumber,
     INVOICE_FIELD_LIMITS.maxInvoiceNumber,
   );
   if (invoiceNumber) {
@@ -735,7 +798,7 @@ export function extractInvoiceFieldsFromLines(lines) {
     );
   }
 
-  const subtotal = sliceAmountPos(input, LABEL_SUBTOTAL_RE);
+  const subtotal = sliceAmountPos(input, labels.subtotal);
   if (subtotal) {
     matched.push(
       makeMatchedFieldWithBbox("subtotal", subtotal.value, subtotal.bbox),
@@ -749,12 +812,12 @@ export function extractInvoiceFieldsFromLines(lines) {
     );
   }
 
-  const tax = sliceAmountPos(input, LABEL_TAX_RE);
+  const tax = sliceAmountPos(input, labels.tax);
   if (tax) {
     matched.push(makeMatchedFieldWithBbox("tax", tax.value, tax.bbox));
   }
 
-  const total = sliceAmountPos(input, LABEL_TOTAL_RE);
+  const total = sliceAmountPos(input, labels.total);
   if (total) {
     matched.push(makeMatchedFieldWithBbox("total", total.value, total.bbox));
   }

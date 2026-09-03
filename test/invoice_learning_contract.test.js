@@ -75,7 +75,7 @@ function evidenceFixture() {
     invoiceEvidenceSchemaVersion: "1", documentId: "AAAAAAAAAAAAAAAAAAAAAA", documentSha256: "a".repeat(64), extractionMode: "DIGITAL_TEXT",
     pageCount: 1, extractedCharacterCount: 10, iso4217Snapshot: { version: "ISO4217-2026-01-01", checksumSha256: "b".repeat(64) }, supplierCandidate: supplier,
     record, table: { columns: [{ columnId: "g_0000000000000001", identifier: "description", ordinal: 0 }, { columnId: "g_0000000000000002", identifier: "quantity", ordinal: 1 }, { columnId: "g_0000000000000003", identifier: "unitPrice", ordinal: 2 }], headerMarkers: [], repeatedHeaderSignature: { columnOrder: ["description", "quantity", "unitPrice"], repeatedHeaderPolicy: "ABSENT", headerRowCount: 1, continuationPageCount: 0 }, splitRowPolicy: "UNSUPPORTED" },
-    confidenceBps: 9000, recordOutcome: "EXTRACTED_UNTRUSTED", reviewReasons: [], untrusted: true,
+    confidenceBps: 9000, recordOutcome: "EXTRACTED_UNTRUSTED", reviewReasons: [], untrusted: true, vendor: null,
   };
 }
 

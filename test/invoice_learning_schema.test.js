@@ -31,7 +31,7 @@ const EXPECTED = {
     EvidenceFragmentV1: ["evidenceId", "page", "rect", "localRef"],
     LineItemV1: ["rowId", "page", "ordinal", "description", "quantity", "unitPrice"],
     ExtractedInvoiceRecordV1: ["supplier", "invoiceNumber", "invoiceDate", "currency", "taxableBase", "taxes", "total", "lineItems"],
-    InvoiceEvidenceV1: ["invoiceEvidenceSchemaVersion", "documentId", "documentSha256", "extractionMode", "pageCount", "extractedCharacterCount", "iso4217Snapshot", "supplierCandidate", "record", "table", "confidenceBps", "recordOutcome", "reviewReasons", "untrusted"],
+    InvoiceEvidenceV1: ["invoiceEvidenceSchemaVersion", "documentId", "documentSha256", "extractionMode", "pageCount", "extractedCharacterCount", "iso4217Snapshot", "supplierCandidate", "record", "table", "confidenceBps", "recordOutcome", "reviewReasons", "untrusted", "vendor"],
   },
   template: {
     AnchorV1: ["identifier", "role", "pageRelation", "rectangle", "toleranceBps"],

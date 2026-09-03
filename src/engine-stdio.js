@@ -142,7 +142,10 @@ function readStdin() {
 
       if (request.kind === "replayTemplateV1") {
         try {
-          const invoiceEvidence = await extractInvoiceEvidence(decoded, { documentId: request.document.documentId });
+              const invoiceEvidence = await extractInvoiceEvidence(decoded, {
+                documentId: request.document.documentId,
+                scalarLabelsExtension: request.scalarLabelsExtension ?? null,
+              });
           return sendLearnedResponse({ protocolVersion: 1, kind: request.kind, requestId: request.requestId, status: "ok", data: normalizeLearnedData(request.kind, replayTemplate(invoiceEvidence, request.template)) });
         } catch (error) {
           return sendLearnedResponse(operationErrorResponse(request, error?.code === "template_invalid" ? "template_invalid" : "engine_lost"));
@@ -157,10 +160,14 @@ function readStdin() {
         }, MAX_OPERATION_DEADLINE_MS).unref();
       });
       try {
-        const evidence = await Promise.race([
-          extractInvoiceEvidence(Buffer.from(decoded), { documentId: request.document.documentId, signal: controller.signal }),
-          deadline,
-        ]);
+            const evidence = await Promise.race([
+              extractInvoiceEvidence(Buffer.from(decoded), {
+                documentId: request.document.documentId,
+                signal: controller.signal,
+                scalarLabelsExtension: request.scalarLabelsExtension ?? null,
+              }),
+              deadline,
+            ]);
         return sendLearnedResponse({
           protocolVersion: 1,
           kind: request.kind,

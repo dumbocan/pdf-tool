@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { extractInvoiceFieldsFromLines, extractOcrFromPdfPage, extractTextFromPdf, PdfExtractionError } from "./extract.js";
+import { detectVendor } from "./vendor-parsers.js";
 
 const ISO_SNAPSHOT = JSON.parse(readFileSync(resolve(import.meta.dirname, "../contracts/invoice-learning/v1/iso-4217-snapshot.json"), "utf8"));
 const ISO_CODES = new Set(ISO_SNAPSHOT.entries.map(({ code }) => code));
@@ -140,8 +141,10 @@ export function materializeOcrEvidence(tokens, { pageWidth, pageHeight } = {}) {
   return { fragments, lines, tokens: normalized, pageCount: byPage.size ? Math.max(...byPage.keys()) : 1 };
 }
 
-    /** Extract scalar fields from raw OCR tokens while preserving positional evidence. */
-    export function extractInvoiceFieldsPositional(tsvRows) {
+        /** Extract scalar fields from raw OCR tokens while preserving positional evidence.
+         *  @param {object} tsvRows
+         *  @param {{ scalarLabelsOverride?: Array, vendor?: string|null }} [options] */
+        export function extractInvoiceFieldsPositional(tsvRows, options) {
       const tokens = Array.isArray(tsvRows) ? tsvRows : tsvRows?.tokens;
       const pageWidth = tsvRows?.pageWidth ?? tokens?.find((token) => token?.pageWidth)?.pageWidth;
       const pageHeight = tsvRows?.pageHeight ?? tokens?.find((token) => token?.pageHeight)?.pageHeight;
@@ -149,7 +152,7 @@ export function materializeOcrEvidence(tokens, { pageWidth, pageHeight } = {}) {
         return { invoiceDate: null, invoiceNumber: null, taxLabel: null, totals: { subtotal: null, tax: null, total: null }, matched: [], lines: [] };
       }
       const materialized = materializeOcrEvidence(tokens, { pageWidth, pageHeight });
-      return { ...extractInvoiceFieldsFromLines(materialized.lines), lines: materialized.lines, fragments: materialized.fragments };
+      return { ...extractInvoiceFieldsFromLines(materialized.lines, options), lines: materialized.lines, fragments: materialized.fragments };
     }
 
     function evidenceFragmentsFor(source, ordinal) {
@@ -473,7 +476,7 @@ function unavailableOcrEvidence(documentId, documentSha256) {
     iso4217Snapshot: { version: ISO_SNAPSHOT.version, checksumSha256: ISO_SNAPSHOT.checksumSha256 },
     supplierCandidate: null, record: emptyInvoiceRecord(),
     table: analyzeInvoiceEvidenceLines([]).table, confidenceBps: 0,
-    recordOutcome: "UNSUPPORTED", reviewReasons: ["NON_DIGITAL_INPUT"], untrusted: true,
+    recordOutcome: "UNSUPPORTED", reviewReasons: ["NON_DIGITAL_INPUT"], untrusted: true, vendor: null,
   };
 }
 
@@ -488,7 +491,7 @@ function ocrConfidenceBps(tokens) {
    return Math.min(10000, Math.round(weighted.reduce((sum, value) => sum + value.confidence * value.area, 0) / area));
 }
 
-export async function extractInvoiceEvidence(buffer, { documentId, digitalExtractor, ocrExtractor, ocrOptions } = {}) {
+export async function extractInvoiceEvidence(buffer, { documentId, digitalExtractor, ocrExtractor, ocrOptions, scalarLabelsExtension } = {}) {
   assertDocumentId(documentId);
   const documentSha256 = createHash("sha256").update(buffer).digest("hex");
   const extracted = await (digitalExtractor ?? extractTextFromPdf)(buffer, { maxPages: 100, maxChars: 80_000 });
@@ -500,6 +503,11 @@ export async function extractInvoiceEvidence(buffer, { documentId, digitalExtrac
   let positionalFields = null;
   let ocrTextProvided = false;
   let pageCount = extracted.pages || 1;
+  // Detect vendor and build extraction options once
+  const detectedVendor = (text && text.trim()) ? (detectVendor(text) ?? null) : null;
+  const extractionOptions = (scalarLabelsExtension?.length)
+    ? { scalarLabelsOverride: scalarLabelsExtension, vendor: detectedVendor }
+    : null;
   if (text.trim().length === 0) {
     const ocr = await (ocrExtractor ?? extractOcrFromPdfPage)(buffer, 1, ocrOptions);
     if (ocr?.error) return unavailableOcrEvidence(documentId, documentSha256);
@@ -507,7 +515,7 @@ export async function extractInvoiceEvidence(buffer, { documentId, digitalExtrac
     ocrTextProvided = typeof ocr?.text === "string" && ocr.text.trim().length > 0;
     ocrTokens = Array.isArray(ocr?.tokens) ? ocr.tokens : [];
         try {
-          positionalFields = extractInvoiceFieldsPositional({ tokens: ocrTokens, pageWidth: ocr?.pageWidth, pageHeight: ocr?.pageHeight });
+          positionalFields = extractInvoiceFieldsPositional({ tokens: ocrTokens, pageWidth: ocr?.pageWidth, pageHeight: ocr?.pageHeight }, extractionOptions);
         } catch {
           positionalFields = null;
         }
@@ -581,6 +589,7 @@ export async function extractInvoiceEvidence(buffer, { documentId, digitalExtrac
       ? (ocrTokens.length && ((ocrTextProvided || analysis.reviewReasons.length || ocrTokens.length <= 2 || positionalFields?.invoiceNumber || positionalFields?.totals?.subtotal || positionalFields?.totals?.tax)) ? "REVIEW_REQUIRED" : "UNSUPPORTED")
       : reasons.length ? (unsupported || !text.trim() ? "UNSUPPORTED" : "REVIEW_REQUIRED") : "EXTRACTED_UNTRUSTED",
     reviewReasons: reasons, untrusted: true,
+    vendor: detectedVendor,
   };
 }
 
