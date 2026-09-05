@@ -40,8 +40,14 @@ function ocrGeometryError(reason) {
   return new PdfExtractionError(`OCR evidence ${reason}`, `ocr_${reason}`);
 }
 
-/** Convert a bottom-left OCR box to the closed top-left 0..10000 rect contract. */
-export function normalizeOcrRect(bbox, pageWidth, pageHeight) {
+/**
+ * Convert a PDF bottom-left OCR box to the closed top-left rect convention.
+ *
+ * The wire contract represents page-relative geometry as integer coordinates on
+ * a 0..10000 scale. PDF y=0 starts at the bottom, so the source box is
+ * vertically flipped before scaling; all edges are then clamped to the page.
+ */
+export function normalize_ocr_rect(bbox, pageWidth, pageHeight) {
   if (!bbox || ![bbox.x, bbox.y, bbox.width, bbox.height, pageWidth, pageHeight].every(Number.isFinite) || pageWidth <= 0 || pageHeight <= 0 || bbox.width <= 0 || bbox.height <= 0) {
     throw ocrGeometryError("geometry_invalid");
   }
@@ -61,10 +67,14 @@ export function normalizeOcrRect(bbox, pageWidth, pageHeight) {
   return { x, y, width: rightScaled - x, height: bottomScaled - y };
 }
 
-export function makeOcrTokenId(page, column, row, sequence) {
+export const normalizeOcrRect = normalize_ocr_rect;
+
+export function make_token_id(page, column, row, sequence) {
   const digest = createHash("sha256").update(`${page}:${row}:${column}:${sequence}`).digest("hex").slice(0, 16);
   return `t_${digest}`;
 }
+
+export const makeOcrTokenId = make_token_id;
 
 function median(values) {
   if (values.length === 0) return 0;
@@ -83,7 +93,7 @@ export function materializeOcrEvidence(tokens, { pageWidth, pageHeight } = {}) {
     if (!Number.isInteger(page) || page < 1 || page > 100 || typeof token?.text !== "string" || token.text.trim() === "") throw ocrGeometryError("token_invalid");
     const width = Number(token.pageWidth ?? pageWidth);
     const height = Number(token.pageHeight ?? pageHeight);
-    const rect = normalizeOcrRect(token.bbox, width, height);
+    const rect = normalize_ocr_rect(token.bbox, width, height);
     return { token, sequence, page, rect, centerY: rect.y + rect.height / 2 };
   });
   const byPage = new Map();
@@ -109,7 +119,7 @@ export function materializeOcrEvidence(tokens, { pageWidth, pageHeight } = {}) {
     for (const [row, group] of groups.entries()) {
       group.tokens.sort((a, b) => a.rect.x - b.rect.x || a.sequence - b.sequence);
       const groupFragments = group.tokens.map((token, column) => {
-        const tokenId = makeOcrTokenId(page, column, row, token.sequence);
+        const tokenId = make_token_id(page, column, row, token.sequence);
         const fragment = { evidenceId: ID("ev", fragments.length), page, rect: token.rect, localRef: { kind: "TOKEN", tokenId } };
         fragments.push(fragment);
         token.tokenId = tokenId;
@@ -201,6 +211,44 @@ const ROW_NUMBER = "[+-]?(?:\\d{1,3}(?:\\.\\d{3})+|\\d+)(?:[.,]\\d{1,6})?";
 const HEADER_WORDS = ["description", "quantity", "unit price", "line total"];
 const OCR_HEADER_WORDS = ["description", "qty", "quantity", "unit", "price", "amount", "line"];
 const COLUMN_IDENTIFIERS = ["description", "quantity", "unitPrice"];
+
+/** Empty cell: absent, blank text, or a fail-closed envelope (MISSING/UNSUPPORTED). */
+function emptyCell(cell) {
+  if (cell == null || cell === "") return true;
+  return typeof cell === "object" && (cell.state === "MISSING" || cell.state === "UNSUPPORTED");
+}
+
+/**
+ * Decide the table's split-row policy from its visual row fragments, in source order.
+ *
+ * A fragment whose first column (description) is empty while a later column carries
+ * a value is the continuation tail of the row above it: that layout yields CONTINUE.
+ * Fragments whose first column carries a value start fresh rows, so a table with no
+ * continuation fragments yields NEW_ROW. A continuation that cannot be joined safely
+ * — no preceding row to continue, later columns also empty, or a page boundary
+ * between the tail and its row — fails closed as UNSUPPORTED; nothing is ever joined
+ * across pages by inference.
+ */
+export function split_row_policy(fragments) {
+  if (!Array.isArray(fragments) || fragments.length === 0) return "UNSUPPORTED";
+  for (let index = 0; index < fragments.length; index += 1) {
+    const fragment = fragments[index];
+    const cells = Array.isArray(fragment) ? fragment : fragment?.cells;
+    if (!Array.isArray(cells) || cells.length === 0) return "UNSUPPORTED";
+    if (!emptyCell(cells[0])) continue;
+    const continuation = cells.slice(1).some((cell) => !emptyCell(cell));
+    if (!continuation) return "UNSUPPORTED";
+    const previousPage = fragments[index - 1]?.pageNumber ?? fragments[index - 1]?.page ?? null;
+    const page = fragment.pageNumber ?? fragment.page ?? null;
+    if (index === 0) return "UNSUPPORTED";
+    if (previousPage != null && page != null && previousPage !== page) return "UNSUPPORTED";
+    return "CONTINUE";
+  }
+  return "NEW_ROW";
+}
+
+/** Backward-compatible camelCase alias for the split-row policy classifier. */
+export const splitRowPolicy = split_row_policy;
 
 function makeRow(description, quantity, unitPrice, source, ordinal, cellFragments) {
   const fallbackFragments = [8, 9, 10].map((offset) => fragmentFor(source, ordinal * 3 + offset));
@@ -324,7 +372,7 @@ function isOcrDescriptionOnly(source) {
 }
 
 /** Sort already-clustered OCR lines by page, vertical position, then x extent. */
-function clusterRowsFromGroups(lines) {
+export function cluster_rows_from_groups(lines) {
   return [...lines].sort((a, b) => {
     const pageA = a.pageNumber ?? 1;
     const pageB = b.pageNumber ?? 1;
@@ -335,6 +383,9 @@ function clusterRowsFromGroups(lines) {
     return pageA - pageB || yA - yB || xA - xB;
   });
 }
+
+/** Backward-compatible camelCase alias for the row-clustering helper. */
+export const clusterRowsFromGroups = cluster_rows_from_groups;
 
 /** Build rows from OCR's local token columns without joining across pages. */
 function parseOcrRows(lines) {
@@ -429,32 +480,50 @@ function addDecimal(a, b) {
 function isNegativeInput(lines) { return lines.some(({ text = "" }) => /(?:^|[:\s])-[0-9][0-9.,]*/.test(text)); }
 function isCreditNote(lines) { return lines.some(({ text = "" }) => /\bcredit(?:\s+(?:note|memo)|\s*$)|nota\s+de\s+cr[eé]dito|abono|rectificativa/i.test(text)); }
 
-function populateLearnedTable(headers) {
-  const pages = [...new Set(headers.map((line) => line.bbox?.page ?? line.pageNumber).filter(Number.isInteger))].sort((a, b) => a - b);
-  const headerMarkers = pages.slice(1).map((page, index) => ({
-    repeatedRowId: ID("g", 1001 + index), canonicalRowId: ID("g", 1000), page, ordinal: index,
-  }));
-  // OCR never infers a cross-page continuation; ambiguous splits stay unsupported.
-  return {
-    columns: [0, 1, 2].map((ordinal) => ({ columnId: ID("g", ordinal + 1), identifier: COLUMN_IDENTIFIERS[ordinal], ordinal })),
-    headerMarkers,
-    repeatedHeaderSignature: { columnOrder: ["description", "quantity", "unitPrice"], repeatedHeaderPolicy: pages.length > 1 ? "REQUIRED" : "ABSENT", headerRowCount: Math.max(1, pages.length), continuationPageCount: Math.max(0, pages.length - 1) },
-    splitRowPolicy: "UNSUPPORTED",
-  };
-}
+    /**
+     * Populate the emitted LearnedTable from the parsed header rows and data rows.
+     *
+     * splitRowPolicy semantics: the wire policy is the split_row_policy decision over
+     * the parsed row fragments in source order — never a hardcoded value. Each parsed
+     * row maps to one fragment carrying its three cell envelopes (description,
+     * quantity, unitPrice) plus its page. A row whose description is empty while a
+     * later cell holds a value is a continuation tail (CONTINUE); rows that each
+     * start their own complete row yield NEW_ROW. Empty tables, dangling tails with
+     * no preceding row, and tails separated from their row by a page boundary fail
+     * closed to UNSUPPORTED — nothing is ever joined across pages by inference.
+     */
+    export function populate_learned_table(headers, rows = []) {
+      const pages = [...new Set(headers.map((line) => line.bbox?.page ?? line.pageNumber).filter(Number.isInteger))].sort((a, b) => a - b);
+      const headerMarkers = pages.slice(1).map((page, index) => ({
+        repeatedRowId: ID("g", 1001 + index), canonicalRowId: ID("g", 1000), page, ordinal: index,
+      }));
+      const fragments = rows.map((row) => ({
+        pageNumber: row.page ?? row.pageNumber ?? null,
+        cells: [row.description, row.quantity, row.unitPrice],
+      }));
+      return {
+        columns: [0, 1, 2].map((ordinal) => ({ columnId: ID("g", ordinal + 1), identifier: COLUMN_IDENTIFIERS[ordinal], ordinal })),
+        headerMarkers,
+        repeatedHeaderSignature: { columnOrder: ["description", "quantity", "unitPrice"], repeatedHeaderPolicy: pages.length > 1 ? "REQUIRED" : "ABSENT", headerRowCount: Math.max(1, pages.length), continuationPageCount: Math.max(0, pages.length - 1) },
+        splitRowPolicy: split_row_policy(fragments),
+      };
+    }
 
-export function analyzeInvoiceEvidenceLines(lines) {
-  const input = Array.isArray(lines) ? lines : [];
-  const parsed = input.some((line) => Array.isArray(line?.ocrTokens)) ? parseOcrRows(input) : parseRows(input);
-  const unsupported = [...parsed.issues];
-  if (isCreditNote(input) || isNegativeInput(input)) unsupported.push("CREDIT_NOTE");
-  return {
-    rows: parsed.rows,
-    table: populateLearnedTable(parsed.headers),
-    reviewReasons: [...new Set(unsupported)],
-    recordOutcome: unsupported.length ? (unsupported.includes("CREDIT_NOTE") ? "UNSUPPORTED" : "REVIEW_REQUIRED") : "EXTRACTED_UNTRUSTED",
-  };
-}
+    /** Backward-compatible camelCase alias for the LearnedTable population helper. */
+    export const populateLearnedTable = populate_learned_table;
+
+    export function analyzeInvoiceEvidenceLines(lines) {
+      const input = Array.isArray(lines) ? lines : [];
+      const parsed = input.some((line) => Array.isArray(line?.ocrTokens)) ? parseOcrRows(input) : parseRows(input);
+      const unsupported = [...parsed.issues];
+      if (isCreditNote(input) || isNegativeInput(input)) unsupported.push("CREDIT_NOTE");
+      return {
+        rows: parsed.rows,
+        table: populate_learned_table(parsed.headers, parsed.rows),
+        reviewReasons: [...new Set(unsupported)],
+        recordOutcome: unsupported.length ? (unsupported.includes("CREDIT_NOTE") ? "UNSUPPORTED" : "REVIEW_REQUIRED") : "EXTRACTED_UNTRUSTED",
+      };
+    }
 
 function emptyInvoiceRecord() {
   return {

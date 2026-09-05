@@ -73,7 +73,7 @@ test("RED: parses OCR columns, repeated headers, and wrapped descriptions determ
   assert.equal(evidence.table.headerMarkers.length, 1);
   assert.equal(evidence.table.headerMarkers[0].page, 2);
   assert.equal(evidence.table.repeatedHeaderSignature.continuationPageCount, 1);
-  assert.equal(evidence.table.splitRowPolicy, "UNSUPPORTED");
+  assert.equal(evidence.table.splitRowPolicy, "NEW_ROW");
   assert.equal(evidence.recordOutcome, "REVIEW_REQUIRED");
   assert.ok(evidence.reviewReasons.includes("NON_DIGITAL_INPUT"));
   assert.equal(evidence.untrusted, true);
@@ -195,6 +195,28 @@ test("RED: rejects a repeated-header/data collision instead of treating it as a 
   const result = analyzeInvoiceEvidenceLines(lines);
 
   assert.deepEqual(result.rows, []);
+  assert.ok(result.reviewReasons.includes("UNSUPPORTED_STRUCTURE"));
+  assert.equal(result.recordOutcome, "REVIEW_REQUIRED");
+});
+
+test("TRIANGULATE: ambiguous OCR column alignment keeps the emitted table policy UNSUPPORTED", () => {
+  const lines = materializeOcrEvidence([
+    token("Description", 100, 100),
+    token("Quantity", 500, 100),
+    token("Unit", 650, 100),
+    token("Price", 720, 100),
+    token("Line", 820, 100),
+    token("Total", 900, 100),
+    token("Widget", 100, 200),
+    token("2", 600, 200),
+    token("3.00", 600, 200),
+    token("6.00", 850, 200),
+  ], { pageWidth: 1000, pageHeight: 1000 }).lines;
+
+  const result = analyzeInvoiceEvidenceLines(lines);
+
+  assert.deepEqual(result.rows, []);
+  assert.equal(result.table.splitRowPolicy, "UNSUPPORTED");
   assert.ok(result.reviewReasons.includes("UNSUPPORTED_STRUCTURE"));
   assert.equal(result.recordOutcome, "REVIEW_REQUIRED");
 });

@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   extractInvoiceEvidence,
   materializeOcrEvidence,
+  make_token_id,
+  normalize_ocr_rect,
   normalizeOcrRect,
 } from "../src/invoice-evidence.js";
 import { validateInvoiceEvidence } from "../src/invoice-learning-contract.js";
@@ -156,3 +158,167 @@ test("RED: local diagnostics retain lowercase extraction modes only", () => {
   assert.doesNotThrow(() => diagnosticLine("ocr_decision", "started", { extractionMode: "ocr" }, "safe-correlation"));
   assert.throws(() => diagnosticLine("ocr_decision", "started", { extractionMode: "OCR" }, "safe-correlation"));
 });
+
+test("RED: exposes snake-case OCR geometry and token ID helpers", () => {
+  assert.deepEqual(normalize_ocr_rect({ x: 100, y: 700, width: 100, height: 50 }, 1000, 1000), {
+    x: 1000,
+    y: 2500,
+    width: 1000,
+    height: 500,
+  });
+  assert.equal(make_token_id(1, 2, 3, 4), "t_48ac903932b9a6d6");
+});
+
+test("TRIANGULATE: snake-case helpers preserve edge clamping and input separation", () => {
+  assert.deepEqual(normalize_ocr_rect({ x: 990, y: -10, width: 30, height: 30 }, 1000, 1000), {
+    x: 9900,
+    y: 9800,
+    width: 100,
+    height: 200,
+  });
+      assert.notEqual(make_token_id(1, 2, 3, 4), make_token_id(1, 2, 3, 5));
+    });
+
+    test("RED: split_row_policy marks an empty-first-column fragment with later values as CONTINUE", async () => {
+      const { split_row_policy } = await import("../src/invoice-evidence.js");
+      const fragments = [
+        { pageNumber: 1, cells: ["Long wrapped description", "", ""] },
+        { pageNumber: 1, cells: ["", "3", "41.50"] },
+      ];
+      assert.equal(split_row_policy(fragments), "CONTINUE");
+    });
+
+    test("RED: split_row_policy returns NEW_ROW when every fragment starts its own complete row", async () => {
+      const { split_row_policy } = await import("../src/invoice-evidence.js");
+      assert.equal(
+        split_row_policy([
+          ["Item A", "1", "9.99"],
+          ["Item B", "2", "4.50"],
+        ]),
+        "NEW_ROW",
+      );
+    });
+
+    test("TRIANGULATE: split_row_policy accepts PRESENT/MISSING cell envelopes like the parser emits", async () => {
+      const { split_row_policy } = await import("../src/invoice-evidence.js");
+      const present = { state: "PRESENT", value: "x", provenance: "EXTRACTED_LOCAL", evidence: [] };
+      const missing = { state: "MISSING", reason: "NOT_FOUND" };
+      assert.equal(
+        split_row_policy([
+          [present, present, present],
+          [missing, present, present],
+        ]),
+        "CONTINUE",
+      );
+      assert.equal(split_row_policy([[present, present, present], [present, present, present]]), "NEW_ROW");
+    });
+
+    test("TRIANGULATE: split_row_policy fails closed as UNSUPPORTED on ambiguous or unjoinable splits", async () => {
+      const { split_row_policy } = await import("../src/invoice-evidence.js");
+      assert.equal(split_row_policy([]), "UNSUPPORTED");
+      assert.equal(split_row_policy([["", "", ""]]), "UNSUPPORTED");
+      assert.equal(split_row_policy([["", "2", "3.00"]]), "UNSUPPORTED");
+      assert.equal(
+        split_row_policy([
+          { pageNumber: 1, cells: ["Item A", "1", "9.99"] },
+          { pageNumber: 2, cells: ["", "3", "41.50"] },
+        ]),
+        "UNSUPPORTED",
+      );
+    });
+
+    test("RED: cluster_rows_from_groups orders OCR groups by page then y position then x extent", async () => {
+      const { cluster_rows_from_groups } = await import("../src/invoice-evidence.js");
+      const lines = [
+        { pageNumber: 1, bbox: { x: 400, y: 600 } },
+        { pageNumber: 2, bbox: { x: 10, y: 10 } },
+        { pageNumber: 1, bbox: { x: 10, y: 200 } },
+        { pageNumber: 1, bbox: { x: 500, y: 200 } },
+      ];
+      assert.deepEqual(
+        cluster_rows_from_groups(lines).map(({ pageNumber, bbox }) => `${pageNumber}:${bbox.x}:${bbox.y}`),
+        ["1:10:200", "1:500:200", "1:400:600", "2:10:10"],
+      );
+    });
+
+    test("TRIANGULATE: cluster_rows_from_groups is deterministic, non-mutating, and tolerates missing geometry", async () => {
+      const { cluster_rows_from_groups } = await import("../src/invoice-evidence.js");
+      const lines = [
+        { pageNumber: 1, bbox: { x: 90, y: 100 } },
+        {},
+        { pageNumber: 1, bbox: { x: 10, y: 100 } },
+      ];
+      const snapshot = JSON.stringify(lines);
+      const first = cluster_rows_from_groups(lines);
+      const second = cluster_rows_from_groups(lines);
+      assert.deepEqual(first, second);
+      assert.deepEqual(first.map((line) => line.bbox?.x ?? 0), [0, 10, 90]);
+      assert.equal(JSON.stringify(lines), snapshot);
+    });
+
+    test("TRIANGULATE: snake-case split/cluster helpers stay aliased to the camelCase OCR surface", async () => {
+      const mod = await import("../src/invoice-evidence.js");
+      assert.equal(mod.splitRowPolicy([["A", "1", "2"]]), mod.split_row_policy([["A", "1", "2"]]));
+      const rows = [
+        { pageNumber: 2, bbox: { x: 1, y: 1 } },
+        { pageNumber: 1, bbox: { x: 1, y: 1 } },
+      ];
+          assert.deepEqual(mod.clusterRowsFromGroups(rows), mod.cluster_rows_from_groups(rows));
+        });
+
+    test("RED: populate_learned_table is exported as the snake-case table helper with a camelCase alias", async () => {
+      const mod = await import("../src/invoice-evidence.js");
+      assert.equal(typeof mod.populate_learned_table, "function");
+      assert.equal(mod.populateLearnedTable, mod.populate_learned_table);
+    });
+
+    test("RED: populate_learned_table derives splitRowPolicy from the classifier over parsed rows", async () => {
+      const { populate_learned_table } = await import("../src/invoice-evidence.js");
+      const present = { state: "PRESENT", value: "x", provenance: "EXTRACTED_LOCAL", evidence: [] };
+      const missing = { state: "MISSING", reason: "EVIDENCE_MISSING" };
+      const complete = { pageNumber: 1, description: present, quantity: present, unitPrice: present };
+      assert.equal(populate_learned_table([], [complete, complete]).splitRowPolicy, "NEW_ROW");
+      assert.equal(
+        populate_learned_table([], [complete, { pageNumber: 1, description: missing, quantity: present, unitPrice: present }]).splitRowPolicy,
+        "CONTINUE",
+      );
+    });
+
+    test("TRIANGULATE: populate_learned_table fails closed on empty, dangling, and cross-page fragments", async () => {
+      const { populate_learned_table } = await import("../src/invoice-evidence.js");
+      const present = { state: "PRESENT", value: "x", provenance: "EXTRACTED_LOCAL", evidence: [] };
+      const missing = { state: "MISSING", reason: "EVIDENCE_MISSING" };
+      const complete = { pageNumber: 1, description: present, quantity: present, unitPrice: present };
+      assert.equal(populate_learned_table([], []).splitRowPolicy, "UNSUPPORTED");
+      assert.equal(
+        populate_learned_table([], [{ pageNumber: 1, description: missing, quantity: present, unitPrice: present }]).splitRowPolicy,
+        "UNSUPPORTED",
+      );
+      assert.equal(
+        populate_learned_table([], [complete, { pageNumber: 2, description: missing, quantity: present, unitPrice: present }]).splitRowPolicy,
+        "UNSUPPORTED",
+      );
+    });
+
+    test("TRIANGULATE: populate_learned_table preserves header-derived metadata while wiring the policy", async () => {
+      const { populate_learned_table } = await import("../src/invoice-evidence.js");
+      const present = { state: "PRESENT", value: "x", provenance: "EXTRACTED_LOCAL", evidence: [] };
+      const headers = [
+        { text: "header", bbox: { page: 1 }, pageNumber: 1 },
+        { text: "header", bbox: { page: 2 }, pageNumber: 2 },
+      ];
+      const table = populate_learned_table(headers, [
+        { pageNumber: 1, description: present, quantity: present, unitPrice: present },
+        { pageNumber: 2, description: present, quantity: present, unitPrice: present },
+      ]);
+      assert.deepEqual(table.columns.map(({ identifier }) => identifier), ["description", "quantity", "unitPrice"]);
+      assert.equal(table.headerMarkers.length, 1);
+      assert.equal(table.headerMarkers[0].page, 2);
+      assert.deepEqual(table.repeatedHeaderSignature, {
+        columnOrder: ["description", "quantity", "unitPrice"],
+        repeatedHeaderPolicy: "REQUIRED",
+        headerRowCount: 2,
+        continuationPageCount: 1,
+      });
+      assert.equal(table.splitRowPolicy, "NEW_ROW");
+    });

@@ -50,7 +50,7 @@
     {
       "name": "invoiceEvidence",
       "path": "invoice-learning.schema.json",
-      "sha256": "a577e5372143ff2a5f8e4c123b07a93eaff8c53eaf4149c5b22e9af8c07aacfb"
+      "sha256": "272e81e55985c58b6267d08e33170b9a111a5ebb3a3636a6bb080198a4b876da"
     },
     {
       "name": "template",
@@ -65,7 +65,7 @@
     {
       "name": "operations",
       "path": "operations.schema.json",
-      "sha256": "cb1b91c6796d0898251539a928e87f85c22be6d2dbb66201a3b731d4fed9fc5c"
+      "sha256": "f2ba4cc339df1a4fdc831f21eb6a4933731c9ea098179fd2161ff199249d707f"
     },
     {
       "name": "corpus",
@@ -650,5 +650,5 @@
       "pointer": null
     }
   ],
-  "contractDigest": "beadbc92378121e9e4e2ee6df588b891abaa0c0df3b04b8ab07807ca5a762abd"
+  "contractDigest": "38f53cfb4b694b1ca3756cbd2096ee50776685d0d094c633ff76c1864a669ff8"
 }
