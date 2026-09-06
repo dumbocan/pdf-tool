@@ -32,18 +32,53 @@
 // marcadores no matchean dígitos/letras). Flag /g: TODAS las ocurrencias.
 const PII_PATTERNS = [
   { re: /[XYZ]?\d{7,8}[A-Z]/gi, kind: "NIF" }, // España: DNI/NIE
-  { re: /[ABCDEFGHJNPQRSUVW](?:[O0]\d{7}[A-Z0-9]?|\d{7}[A-Z0-9]|\d{8})/gi, kind: "CIF" }, // España: CIF (B+8díg, B+0+7díg OCR canarios)
+  {
+    re: /[ABCDEFGHJNPQRSUVW](?:[O0]\d{7}[A-Z0-9]?|\d{7}[A-Z0-9]|\d{8})/gi,
+    kind: "CIF",
+  }, // España: CIF (B+8díg, B+0+7díg OCR canarios)
   { re: /\b(?:20|23|24|27|30|33|34)-?\d{8}-?\d\b/g, kind: "CUIT" }, // Argentina
   { re: /\b\d{1,3}(?:\.\d{3}){1,2}-[\dkK]\b/g, kind: "RUT" }, // Chile
   { re: /\b\d{9,10}-\d\b/g, kind: "NIT" }, // Colombia
   { re: /\b[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{2,3}\b/g, kind: "RFC" }, // México
   { re: /\b\d{11}\b/g, kind: "RUC" }, // Perú/Ecuador/Uruguay
-  { re: /\b[A-Z]{2}\d{2}[ ]?\d{4}[ ]?\d{4}[ ]?\d{4}[ ]?\d{4}[ ]?\d{4}\b/g, kind: "IBAN" },
+  {
+    re: /\b[A-Z]{2}\d{2}[ ]?\d{4}[ ]?\d{4}[ ]?\d{4}[ ]?\d{4}[ ]?\d{4}\b/g,
+    kind: "IBAN",
+  },
   { re: /\b[\w.+-]+@[\w-]+\.[\w.]+\b/g, kind: "EMAIL" },
-  { re: /\b(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{2,3}\)[\s.-]?)?\d{3}[\s.-]?\d{3}[\s.-]?\d{3,4}\b/g, kind: "PHONE" },
+  // Phone numbers MUST carry at least one human formatting indicator:
+  // a leading '+', parentheses around the area code, or a separator
+  // between digit groups. This prevents bare digit sequences (product codes,
+  // EAN prefixes, invoice-line identifiers) from being misclassified as phones.
+  {
+    re: /\b(?:(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{2,3}\)[\s.-]?)?\d{3}[\s.-]+\d{3}(?:[\s.-]?\d{3,4})?\b|\+\d{7,12}\b)/g,
+    kind: "PHONE",
+  },
+  // Dates: ISO YYYY-MM-DD, and the European DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
+  // forms. These are invoice line/identity dates: despite being calendar
+  // values, they are part of the minimised field set and are replaced so the
+  // outbound payload never carries a real date the model could pair with a
+  // real invoice number (correlation risk under Art. 5.1.c).
+  {
+    re: /\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b/g,
+    kind: "DATE",
+  },
+  // Tax/currency identifiers (IGIC, IVA, % suffix) are opaque tokens: the
+  // model only needs to know a tax field exists, never the rate or regime,
+  // and a rate like "7.00%" combined with a real total is re-linkable.
+  { re: /\b(?:IGIC|IVA|I\.?V\.?A\.?|I\.?G\.?I\.?C\.?)(?:\s*[\d.,]+\s*%)?\b/gi, kind: "TAXLABEL" },
+  // Standalone percent rates (a tax label that arrives as the bare value,
+  // e.g. "7.00%") are re-linkable to a real total, so they are replaced too.
+  { re: /\b\d{1,3}(?:[.,]\d{1,2})?\s*%(?=\s|$)/g, kind: "PERCENT" },
+  // Invoice / document references: a letter prefix plus digits and separators
+  // (e.g. "L2026S0001/0001", "FRA-2025-00123"). These uniquely identify a
+  // document and are re-linkable to the supplier, so they are treated as
+  // identifiers rather than left in clear.
+  { re: /\b[A-Za-z][A-Za-z0-9]{2,}[\-\/][A-Za-z0-9\-\/]{2,}\b/g, kind: "REF" },
 ];
 
-const AMOUNT_PATTERN = /\b\d+(?:[.,]\d{3})*(?:[.,]\d{2})?\s*(?:€|EUR|USD|\$)(?=\s|$)/g;
+const AMOUNT_PATTERN =
+  /\b\d+(?:[.,]\d{3})*(?:[.,]\d{2})?\s*(?:€|EUR|USD|\$)(?=\s|$)/g;
 
 export function createPseudonymizer(options = {}) {
   const { seed } = options;
@@ -51,9 +86,10 @@ export function createPseudonymizer(options = {}) {
   // `seed` opcional: si se pasa, el factor es determinista (3..12) — pensado
   // para tests reproducibles; en producción PrivacyTransactionService sigue
   // creando un pseudonymizer SIN seed (factor aleatorio por transacción).
-  const factor = typeof seed === "number"
-    ? 3 + (Math.abs(Math.floor(seed)) % 10) // determinista: 3 + (seed % 10)
-    : 3 + Math.floor(Math.random() * 10);   // aleatorio: 3..12
+  const factor =
+    typeof seed === "number"
+      ? 3 + (Math.abs(Math.floor(seed)) % 10) // determinista: 3 + (seed % 10)
+      : 3 + Math.floor(Math.random() * 10); // aleatorio: 3..12
   const piiMap = new Map(); // real -> ficticio (la "clave" que nunca sale)
   const reversePii = new Map(); // ficticio -> real
   const reverseAmounts = new Map(); // ficticio -> real (string literal)
@@ -103,7 +139,8 @@ export function createPseudonymizer(options = {}) {
       if (fakeValue == null || fakeValue === "") return fakeValue;
       const cleaned = String(fakeValue).replace(/[€\s]/g, "");
       const fakeCents = Math.round(parseFloat(cleaned.replace(",", ".")) * 100);
-      if (!Number.isFinite(fakeCents) || fakeCents % factor !== 0) return fakeValue;
+      if (!Number.isFinite(fakeCents) || fakeCents % factor !== 0)
+        return fakeValue;
       const realCents = fakeCents / factor;
       return (realCents / 100).toFixed(2);
     },
@@ -118,7 +155,10 @@ export function createPseudonymizer(options = {}) {
     reverseDeep(value) {
       if (typeof value === "string") {
         // Marcadores DENTRO de strings compuestos (ej. "ES30... [PHONE-5]").
-        let out = value.replace(/\[([A-Z]+)-\d+\]/g, (marker) => this.reversePii(marker) ?? marker);
+        let out = value.replace(
+          /\[([A-Z]+)-\d+\]/g,
+          (marker) => this.reversePii(marker) ?? marker,
+        );
         const pii = this.reversePii(out);
         if (pii !== out) out = pii;
         const m = out.match(/^([\d.,]+)\s*(?:€|EUR|USD|\$)?$/);
@@ -131,7 +171,8 @@ export function createPseudonymizer(options = {}) {
       if (Array.isArray(value)) return value.map((v) => this.reverseDeep(v));
       if (value && typeof value === "object") {
         const out = {};
-        for (const [k, v] of Object.entries(value)) out[k] = this.reverseDeep(v);
+        for (const [k, v] of Object.entries(value))
+          out[k] = this.reverseDeep(v);
         return out;
       }
       return value;
@@ -144,8 +185,11 @@ export function createPseudonymizer(options = {}) {
       if (!Array.isArray(lineItems)) return lineItems;
       return lineItems.map((li) => ({
         ...li,
-        unitPrice: li.unitPrice != null ? this.reverseAmount(li.unitPrice) : li.unitPrice,
-        amount: li.amount != null ? this.reverseAmount(li.amount) : li.amount,
+        unitPrice:
+          li.unitPrice == null
+            ? li.unitPrice
+            : this.reverseAmount(li.unitPrice),
+        amount: li.amount == null ? li.amount : this.reverseAmount(li.amount),
       }));
     },
   };

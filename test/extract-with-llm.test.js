@@ -73,12 +73,38 @@ test("extract reports parser stats, line-item schema, and the reconciled total f
     const result = await response.json();
     assert.equal(result.parser, "mercadona-tabular");
     assert.deepEqual(result.parserStats, {
-      lineItemsDetected: 44,
-      lineItemsSkipped: 2,
-      sumLineItemTotals: 121.41,
+      lineItemsDetected: 46,
+      lineItemsSkipped: 0,
+      sumLineItemTotals: 124.11,
     });
-    assert.equal(result.lineItems.length, 44);
-    assert.deepEqual(Object.keys(result.lineItems[0]).sort(), [
+        assert.equal(result.lineItems.length, 46);
+        assert.deepEqual(
+          result.lineItems
+            .filter(({ description }) =>
+              ["PARKING (18:44:00 - 19:40:00)", "CHOC LECHE S/AZUCAR"].includes(description),
+            )
+            .map(({ description, units, unit_price_eur, total_eur }) => ({
+              description,
+              units,
+              unit_price_eur,
+              total_eur,
+            })),
+          [
+            {
+              description: "PARKING (18:44:00 - 19:40:00)",
+              units: 1,
+              unit_price_eur: 0,
+              total_eur: 0,
+            },
+            {
+              description: "CHOC LECHE S/AZUCAR",
+              units: 2,
+              unit_price_eur: 1.35,
+              total_eur: 2.7,
+            },
+          ],
+        );
+        assert.deepEqual(Object.keys(result.lineItems[0]).sort(), [
       "base_eur",
       "description",
       "tax_eur",

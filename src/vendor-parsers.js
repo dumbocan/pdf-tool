@@ -30,6 +30,18 @@ const VENDOR_MARKERS = [
 export function detectVendor(text) {
   const input = typeof text === "string" ? text : "";
   for (const entry of VENDOR_MARKERS) {
+    if (entry.name === "acastimar") {
+      const hasLegacyMarkers =
+        /ACASTIMAR,\s*S\.L\./i.test(input) && /FACTURA\s+VENTA\b/i.test(input);
+      const hasStructuralMarkers = [
+        /IMPORTE\s+NETO/i,
+        /BASE\s*IVA/i,
+        /IMPORTE\s+FACTURA/i,
+        /\bVENTA\b/i,
+      ].every((re) => re.test(input));
+      if (hasLegacyMarkers || hasStructuralMarkers) return entry.name;
+      continue;
+    }
     if (entry.markers.some((re) => re.test(input))) return entry.name;
   }
   return null;
@@ -38,15 +50,25 @@ export function detectVendor(text) {
 function toIsoDate(value) {
   if (!value) return null;
   const trimmed = String(value).trim();
+  const isValidDate = (year, month, day) => {
+    const y = Number(year);
+    const m = Number(month);
+    const d = Number(day);
+    if (!Number.isInteger(y) || y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) {
+      return false;
+    }
+    const date = new Date(Date.UTC(y, m - 1, d));
+    return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+  };
   // YYYY-MM-DD
   let m = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  if (m && isValidDate(m[1], m[2], m[3])) return `${m[1]}-${m[2]}-${m[3]}`;
   // DD/MM/YYYY
   m = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  if (m && isValidDate(m[3], m[2], m[1])) return `${m[3]}-${m[2]}-${m[1]}`;
   // DD-MM-YYYY
   m = trimmed.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  if (m && isValidDate(m[3], m[2], m[1])) return `${m[3]}-${m[2]}-${m[1]}`;
   return null;
 }
 
@@ -121,31 +143,72 @@ function parseEmpark(text) {
 // --- ACASTIMAR ---
 // "FACTURA VENTA 26-722", "Fecha operación: 04-06-2026",
 // "Importe neto BaseIVA 1.298,05 1.298,05" and "Importe Factura(EUR): 1.298,05".
-const ACASTIMAR_NUMBER_RE = /FACTURA\s+VENTA\s+(\d{2,4}-\d{2,4})/i;
+const ACASTIMAR_LEGACY_NUMBER_RE = /FACTURA\s+VENTA\s+(\d{2,4}-\d{2,4})/i;
 const ACASTIMAR_DATE_RE = /Fecha\s+operaci[oó]n:\s*(\d{2}-\d{2}-\d{4})/i;
 const ACASTIMAR_TOTALS_RE = /Importe\s+neto\s+BaseIVA\s+([\d.,]+)\s+([\d.,]+)/i;
 const ACASTIMAR_TOTAL_RE = /Importe\s+Factura\(EUR\):\s*([\d.,]+)/i;
+const ACASTIMAR_DIGITAL_NUMBER_RE = /\b(\d{6,10})\s+VENTA\b/i;
+const ACASTIMAR_DIGITAL_DATE_RE =
+  /(\d{2}[-/.]\d{2}[-/.]\d{4})[\s\S]{0,80}?\bFecha\b/i;
+const ACASTIMAR_AMOUNT_RE = /(?:\d{1,3}(?:\.\d{3})+|\d+)[,.]\d{2}\b/g;
+const ACASTIMAR_STRICT_AMOUNT_RE = /^(?:\d{1,3}(?:\.\d{3})+|\d+)[,.]\d{2}$/;
+const ACASTIMAR_AMOUNT_WINDOW = 360;
+const ACASTIMAR_MAX_AMOUNT = 100_000_000;
+
+function parseBoundedAcastimarAmount(raw) {
+  const value = parseAmount(raw);
+  const numeric = Number(value);
+  if (!value || !Number.isFinite(numeric) || numeric <= 0 || numeric > ACASTIMAR_MAX_AMOUNT) {
+    return null;
+  }
+  return value;
+}
+
+function findSingleAcastimarAmount(text, markerRe) {
+  const marker = text.match(markerRe);
+  if (!marker) return null;
+  const region = text.slice(marker.index + marker[0].length, marker.index + marker[0].length + ACASTIMAR_AMOUNT_WINDOW);
+  const amounts = [...region.matchAll(ACASTIMAR_AMOUNT_RE)];
+  if (amounts.length !== 1) return null;
+  return parseBoundedAcastimarAmount(amounts[0][0]);
+}
 
 function parseAcastimar(text) {
   const fields = {};
-  const number = text.match(ACASTIMAR_NUMBER_RE)?.[1] ?? null;
+  const number =
+    text.match(ACASTIMAR_LEGACY_NUMBER_RE)?.[1] ??
+    text.match(ACASTIMAR_DIGITAL_NUMBER_RE)?.[1] ??
+    null;
   if (number) fields.invoiceNumber = number;
-  const date = toIsoDate(text.match(ACASTIMAR_DATE_RE)?.[1] ?? null);
+  const date = toIsoDate(
+    text.match(ACASTIMAR_DATE_RE)?.[1] ??
+      text.match(ACASTIMAR_DIGITAL_DATE_RE)?.[1] ??
+      null,
+  );
   if (date) fields.invoiceDate = date;
   const totals = text.match(ACASTIMAR_TOTALS_RE);
-  if (totals) {
+  const hasLegacyTotals =
+    totals &&
+    ACASTIMAR_STRICT_AMOUNT_RE.test(totals[1]) &&
+    ACASTIMAR_STRICT_AMOUNT_RE.test(totals[2]);
+  if (hasLegacyTotals) {
     fields.totals = {
-      subtotal: parseAmount(totals[1]),
+      subtotal: parseBoundedAcastimarAmount(totals[1]),
       tax: null,
-      total: parseAmount(totals[2]),
+      total: parseBoundedAcastimarAmount(totals[2]),
     };
   } else {
-    const totalOnly = text.match(ACASTIMAR_TOTAL_RE);
-    if (totalOnly) {
+    const subtotal = findSingleAcastimarAmount(text, /IMPORTE\s+NETO[\s\S]{0,40}?BASE\s*IVA/i);
+    const total =
+      text.match(ACASTIMAR_TOTAL_RE)?.[1] ??
+      text.match(/IMPORTE\s+FACTURA\s*\(\s*EUR\s*\)\s*:\s*([\d.,]+)/i)?.[1] ??
+      null;
+    const parsedTotal = total ? parseBoundedAcastimarAmount(total) : null;
+    if (subtotal || parsedTotal) {
       fields.totals = {
-        subtotal: null,
+        subtotal,
         tax: null,
-        total: parseAmount(totalOnly[1]),
+        total: parsedTotal,
       };
     }
   }

@@ -66,6 +66,25 @@ test("ACASTIMAR parser extracts number and date; totals from neto/BaseIVA (no ta
   assert.equal(result.fields.taxLabel, null);
 });
 
+test("ACASTIMAR parser handles the digital-text ordering used by current invoices", () => {
+  const text = [
+    "02-01-2099 Fecha",
+    "00000000 VENTA",
+    "Importe neto BaseIVA " +
+      "texto ".repeat(35) +
+      " Importe Factura (EUR) : 123,45",
+  ].join("  ");
+
+  const result = parseVendorInvoice(text);
+  assert.equal(result?.vendor, "acastimar");
+  assert.deepEqual(result?.fields, {
+    invoiceNumber: "00000000",
+    invoiceDate: "2099-01-02",
+    totals: { subtotal: "123.45", tax: null, total: "123.45" },
+    taxLabel: null,
+  });
+});
+
 test("parseVendorInvoice returns null for unknown or empty text", () => {
   assert.equal(parseVendorInvoice("factura genérica sin proveedor"), null);
   assert.equal(parseVendorInvoice(""), null);

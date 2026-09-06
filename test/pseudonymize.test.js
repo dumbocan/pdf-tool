@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPseudonymizer } from "../src/pseudonymize.js";
 
+function containsExactAmountToken(text, amount) {
+  const escapedAmount = amount.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\d.,])${escapedAmount}(?=\\s*(?:€|EUR|USD|\\$)(?![\\w]))`).test(text);
+}
+
 test("PII identifiers replaced consistently across multiple occurrences", () => {
   const p = createPseudonymizer();
   const text = "NIF: 12345678Z, otra vez 12345678Z, y email cliente@example.com";
@@ -28,7 +33,17 @@ test("amounts mapped affinely preserving arithmetic (factor entero)", () => {
   // aritmética ficticia exacta en céntimos: fakeSub + fakeIva === fakeTotal
   const sum = (Math.round(parseFloat(fakeSub) * 100) + Math.round(parseFloat(fakeIva) * 100)) / 100;
   assert.equal(sum.toFixed(2), fakeTotal, "subtotal×F + iva×F = total×F exacto");
-  assert.ok(!out.includes("1250.00"), "importe real no debe aparecer");
+  assert.equal(containsExactAmountToken(out, "1250.00"), false, "importe real no debe aparecer como token exacto");
+});
+
+test("factor 9 allows a prefixed fake amount without retaining the exact real amount token", () => {
+  const p = createPseudonymizer({ seed: 6 });
+  assert.equal(p.factor, 9);
+
+  const out = p.pseudonymize("Total: 1250.00 €");
+
+  assert.ok(out.includes("11250.00 €"), "factor 9 must produce 11250.00 €");
+  assert.equal(containsExactAmountToken(out, "1250.00"), false, "1250.00 € must not remain as an exact amount token");
 });
 
 test("reverseAmount restores real values exactly", () => {

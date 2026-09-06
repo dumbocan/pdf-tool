@@ -168,7 +168,10 @@ describe("PrivacyTransactionService.prepare — BoundTransaction contract", () =
       "rawText",
       "documentBytes",
     ]) {
-      assert.ok(!boundKeys.includes(forbidden), `BoundTransaction leaked ${forbidden}`);
+      assert.ok(
+        !boundKeys.includes(forbidden),
+        `BoundTransaction leaked ${forbidden}`,
+      );
     }
   });
 
@@ -242,7 +245,9 @@ describe("PrivacyTransactionService.prepare — outbound payload hygiene", () =>
       requestId: VALID_REQUEST_ID,
     });
 
-    const recomputed = createHash("sha256").update(request.exactPayloadBytes).digest("hex");
+    const recomputed = createHash("sha256")
+      .update(request.exactPayloadBytes)
+      .digest("hex");
     assert.equal(recomputed, bound.payloadSha256);
     assert.equal(recomputed, request.payloadSha256);
   });
@@ -269,7 +274,9 @@ describe("PrivacyTransactionService.prepare — outbound payload hygiene", () =>
     //     invoiceDate, invoiceNumber, taxLabel, totals
     //       subtotal, tax, total
     //   fieldsMatched, purpose, schemaVersion
-    const propertyKeys = [...text.matchAll(/"([A-Za-z0-9_]+)":/g)].map((m) => m[1]);
+    const propertyKeys = [...text.matchAll(/"([A-Za-z0-9_]+)":/g)].map(
+      (m) => m[1],
+    );
     assert.deepEqual(propertyKeys, [
       "documentId",
       "fields",
@@ -313,13 +320,23 @@ describe("PrivacyTransactionService.prepare — outbound payload hygiene", () =>
     const serialized = Buffer.from(request.exactPayloadBytes).toString("utf8");
     assert.doesNotMatch(serialized, /%PDF-/, "raw PDF magic must never appear");
     assert.doesNotMatch(serialized, /%%EOF/, "PDF trailer must never appear");
-    assert.doesNotMatch(serialized, new RegExp(base64), "raw base64 PDF must never appear");
-    assert.doesNotMatch(serialized, new RegExp(pdfBytes.toString("utf8").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(
+      serialized,
+      new RegExp(base64),
+      "raw base64 PDF must never appear",
+    );
+    assert.doesNotMatch(
+      serialized,
+      new RegExp(
+        pdfBytes.toString("utf8").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      ),
+    );
   });
 
   it("the payload replaces PII identifiers and factor-scales amounts — real values never appear", () => {
     const service = makeService();
-    const real = "NIF: 12345678Z, IBAN ES9101234567890123456789, Total: 121.00 €";
+    const real =
+      "NIF: 12345678Z, IBAN ES9101234567890123456789, Total: 121.00 €";
     const bound = service.prepare(
       makePrepareArgs({
         localExtraction: makeLocalExtraction({
@@ -340,12 +357,24 @@ describe("PrivacyTransactionService.prepare — outbound payload hygiene", () =>
     });
     const serialized = Buffer.from(request.exactPayloadBytes).toString("utf8");
     assert.doesNotMatch(serialized, /12345678Z/, "real NIF must never appear");
-    assert.doesNotMatch(serialized, /ES9101234567890123456789/, "real IBAN must never appear");
+    assert.doesNotMatch(
+      serialized,
+      /ES9101234567890123456789/,
+      "real IBAN must never appear",
+    );
     // The real totals are 100.00 / 21.00 / 121.00 — none of them may appear,
     // because the pseudonymizer replaces amounts with the factor-scaled form.
-    assert.doesNotMatch(serialized, /"100\.00"/, "real subtotal must never appear");
+    assert.doesNotMatch(
+      serialized,
+      /"100\.00"/,
+      "real subtotal must never appear",
+    );
     assert.doesNotMatch(serialized, /"21\.00"/, "real tax must never appear");
-    assert.doesNotMatch(serialized, /"121\.00"/, "real total must never appear");
+    assert.doesNotMatch(
+      serialized,
+      /"121\.00"/,
+      "real total must never appear",
+    );
     // But a marker must be present (the pseudonymizer is doing its job).
     assert.match(serialized, /\[NIF-\d+\]/, "PII marker must be present");
   });
@@ -380,7 +409,10 @@ describe("PrivacyTransactionService.confirm — atomic single-use consume", () =
     });
     REGISTERED_SERVICES.add(service);
     const bound = service.prepare(makePrepareArgs());
-    service.confirm({ transactionId: bound.transactionId, requestId: VALID_REQUEST_ID });
+    service.confirm({
+      transactionId: bound.transactionId,
+      requestId: VALID_REQUEST_ID,
+    });
 
     const eventsBefore = sink.events.length;
     assert.throws(
@@ -395,7 +427,11 @@ describe("PrivacyTransactionService.confirm — atomic single-use consume", () =
         return true;
       },
     );
-    assert.equal(sink.events.length, eventsBefore, "replay must not emit a new audit event");
+    assert.equal(
+      sink.events.length,
+      eventsBefore,
+      "replay must not emit a new audit event",
+    );
   });
 
   it("confirm of an expired transaction fails with tx_expired and emits a tx_expired audit event", () => {
@@ -423,7 +459,9 @@ describe("PrivacyTransactionService.confirm — atomic single-use consume", () =
             return true;
           },
         );
-        const events = sink.events.filter((e) => e.kind === AuditEvent.TX_EXPIRED);
+        const events = sink.events.filter(
+          (e) => e.kind === AuditEvent.TX_EXPIRED,
+        );
         assert.equal(events.length, 1);
         assert.equal(events[0].transactionId, bound.transactionId);
         assert.equal(events[0].outcome, "expired");
@@ -449,7 +487,8 @@ describe("PrivacyTransactionService.confirm — atomic single-use consume", () =
           requestId: VALID_REQUEST_ID,
           providerId: "openai",
         }),
-      (err) => err instanceof PrivacyTransactionError && err.code === "tx_mismatch",
+      (err) =>
+        err instanceof PrivacyTransactionError && err.code === "tx_mismatch",
     );
     const events = sink.events.filter((e) => e.kind === AuditEvent.TX_MISMATCH);
     assert.equal(events.length, 1);
@@ -472,10 +511,14 @@ describe("PrivacyTransactionService.confirm — atomic single-use consume", () =
           requestId: VALID_REQUEST_ID,
           documentSha256: "deadbeef".repeat(8), // different hash
         }),
-      (err) => err instanceof PrivacyTransactionError && err.code === "tx_mismatch",
+      (err) =>
+        err instanceof PrivacyTransactionError && err.code === "tx_mismatch",
     );
-     // Transaction must be dropped so it cannot be silently reused
-    assert.ok(!service._transactions.has(bound.transactionId), "transaction should be removed");
+    // Transaction must be dropped so it cannot be silently reused
+    assert.ok(
+      !service._transactions.has(bound.transactionId),
+      "transaction should be removed",
+    );
   });
 
   it("confirm with mutated localExtraction throws tx_mismatch", () => {
@@ -500,11 +543,18 @@ describe("PrivacyTransactionService.confirm — atomic single-use consume", () =
               simplifiedInvoiceDate: null,
               taxLabel: "IVA",
               totals: { subtotal: "100.00", tax: "21.00", total: "121.00" },
-              matched: ["invoiceNumber", "invoiceDate", "subtotal", "tax", "total"],
+              matched: [
+                "invoiceNumber",
+                "invoiceDate",
+                "subtotal",
+                "tax",
+                "total",
+              ],
             },
           }),
         }),
-      (err) => err instanceof PrivacyTransactionError && err.code === "tx_mismatch",
+      (err) =>
+        err instanceof PrivacyTransactionError && err.code === "tx_mismatch",
     );
   });
 
@@ -528,7 +578,8 @@ describe("PrivacyTransactionService.confirm — atomic single-use consume", () =
           transactionId: bound.transactionId,
           requestId: VALID_REQUEST_ID,
         }),
-      (err) => err instanceof PrivacyTransactionError && err.code === "tx_mismatch",
+      (err) =>
+        err instanceof PrivacyTransactionError && err.code === "tx_mismatch",
     );
   });
 
@@ -560,8 +611,16 @@ describe("PrivacyTransactionService.confirm — atomic single-use consume", () =
       requestId: VALID_REQUEST_ID,
       documentSha256: "0".repeat(64),
     });
-    assert.equal(onSentCalledBeforeMismatch, false, "onSent must not fire on mismatch");
-    assert.equal(typeof onSent, "function", "onSent must be returned on success");
+    assert.equal(
+      onSentCalledBeforeMismatch,
+      false,
+      "onSent must not fire on mismatch",
+    );
+    assert.equal(
+      typeof onSent,
+      "function",
+      "onSent must be returned on success",
+    );
     onSent();
   });
 
@@ -596,38 +655,43 @@ describe("PrivacyTransactionService.confirm — atomic single-use consume", () =
           transactionId: "BBBBBBBBBBBBBBBBBBBBBB",
           requestId: VALID_REQUEST_ID,
         }),
-        (err) => err instanceof PrivacyTransactionError && err.code === "tx_unknown",
-      );
-    });
-
-    it("concurrent confirms of the same transactionId resolve to one success and the rest to tx_already_consumed", () => {
-      const service = makeService();
-      const bound = service.prepare(makePrepareArgs());
-
-      const successes = [];
-      const failures = [];
-      for (let i = 0; i < 5; i++) {
-        try {
-          const result = service.confirm({
-            transactionId: bound.transactionId,
-            requestId: `550e8400-e29b-41d4-a716-446655${String(440010 + i).padStart(6, "0")}`,
-          });
-          successes.push(result);
-        } catch (e) {
-          failures.push(e.code);
-        }
-      }
-
-      assert.equal(successes.length, 1, "exactly one confirm should succeed");
-      assert.equal(failures.length, 4, "the rest should fail with tx_already_consumed");
-      assert.ok(
-        failures.every((code) => code === "tx_already_consumed"),
-        "every failure must be tx_already_consumed",
-      );
-      assert.ok(successes[0].request.exactPayloadBytes instanceof Uint8Array);
-      assert.ok(successes[0].request.exactPayloadBytes.byteLength > 0);
-    });
+      (err) =>
+        err instanceof PrivacyTransactionError && err.code === "tx_unknown",
+    );
   });
+
+  it("concurrent confirms of the same transactionId resolve to one success and the rest to tx_already_consumed", () => {
+    const service = makeService();
+    const bound = service.prepare(makePrepareArgs());
+
+    const successes = [];
+    const failures = [];
+    for (let i = 0; i < 5; i++) {
+      try {
+        const result = service.confirm({
+          transactionId: bound.transactionId,
+          requestId: `550e8400-e29b-41d4-a716-446655${String(440010 + i).padStart(6, "0")}`,
+        });
+        successes.push(result);
+      } catch (e) {
+        failures.push(e.code);
+      }
+    }
+
+    assert.equal(successes.length, 1, "exactly one confirm should succeed");
+    assert.equal(
+      failures.length,
+      4,
+      "the rest should fail with tx_already_consumed",
+    );
+    assert.ok(
+      failures.every((code) => code === "tx_already_consumed"),
+      "every failure must be tx_already_consumed",
+    );
+    assert.ok(successes[0].request.exactPayloadBytes instanceof Uint8Array);
+    assert.ok(successes[0].request.exactPayloadBytes.byteLength > 0);
+  });
+});
 
 describe("PrivacyTransactionService — lifetime, cancellation, and clear", () => {
   it("cancelTransaction removes the transaction and emits tx_cancelled", () => {
@@ -644,7 +708,9 @@ describe("PrivacyTransactionService — lifetime, cancellation, and clear", () =
     assert.equal(result, true);
     assert.equal(service.getTransaction(bound.transactionId), null);
 
-    const events = sink.events.filter((e) => e.kind === AuditEvent.TX_CANCELLED);
+    const events = sink.events.filter(
+      (e) => e.kind === AuditEvent.TX_CANCELLED,
+    );
     assert.equal(events.length, 1);
     assert.equal(events[0].transactionId, bound.transactionId);
   });
@@ -662,15 +728,25 @@ describe("PrivacyTransactionService — lifetime, cancellation, and clear", () =
       providerRegistry: ENABLED_REGISTRY,
       transactionTtlMs: 1,
     });
-    service.prepare(makePrepareArgs({ operationCorrelationId: "550e8400-e29b-41d4-a716-446655440010" }));
-    service.prepare(makePrepareArgs({ operationCorrelationId: "550e8400-e29b-41d4-a716-446655440011" }));
+    service.prepare(
+      makePrepareArgs({
+        operationCorrelationId: "550e8400-e29b-41d4-a716-446655440010",
+      }),
+    );
+    service.prepare(
+      makePrepareArgs({
+        operationCorrelationId: "550e8400-e29b-41d4-a716-446655440011",
+      }),
+    );
 
     return new Promise((resolve) => {
       setImmediate(() => {
         const removed = service.cleanup();
         assert.ok(removed >= 2);
         assert.equal(service.size, 0);
-        const expired = sink.events.filter((e) => e.kind === AuditEvent.TX_EXPIRED);
+        const expired = sink.events.filter(
+          (e) => e.kind === AuditEvent.TX_EXPIRED,
+        );
         assert.equal(expired.length, removed);
         resolve();
       });
@@ -685,17 +761,29 @@ describe("PrivacyTransactionService — lifetime, cancellation, and clear", () =
     });
     REGISTERED_SERVICES.add(service);
     service.prepare(makePrepareArgs());
-    service.prepare(makePrepareArgs({ operationCorrelationId: "550e8400-e29b-41d4-a716-446655440020" }));
+    service.prepare(
+      makePrepareArgs({
+        operationCorrelationId: "550e8400-e29b-41d4-a716-446655440020",
+      }),
+    );
     const eventsBefore = sink.events.length;
     service.clear();
     assert.equal(service.size, 0);
-    assert.equal(sink.events.length, eventsBefore, "clear must not emit audit events");
+    assert.equal(
+      sink.events.length,
+      eventsBefore,
+      "clear must not emit audit events",
+    );
   });
 
   it("shutdown clears every transaction and is safe to call repeatedly", () => {
     const service = makeService();
     service.prepare(makePrepareArgs());
-    service.prepare(makePrepareArgs({ operationCorrelationId: "550e8400-e29b-41d4-a716-446655440030" }));
+    service.prepare(
+      makePrepareArgs({
+        operationCorrelationId: "550e8400-e29b-41d4-a716-446655440030",
+      }),
+    );
     service.shutdown();
     assert.equal(service.size, 0);
     // Must be a no-op the second time (no double-unregister crash).
@@ -851,7 +939,10 @@ describe("AuditSink — closed enum and content-free guarantee", () => {
     assert.equal(sink.size, AUDIT_EVENT_CAP);
     const events = sink.events;
     assert.equal(events[0].operationCorrelationId, `corr-50`);
-    assert.equal(events[events.length - 1].operationCorrelationId, `corr-${AUDIT_EVENT_CAP + 49}`);
+    assert.equal(
+      events[events.length - 1].operationCorrelationId,
+      `corr-${AUDIT_EVENT_CAP + 49}`,
+    );
   });
 
   it("clear empties the buffer without throwing", () => {
@@ -879,7 +970,11 @@ describe("AuditSink — closed enum and content-free guarantee", () => {
     });
     const snapshot = sink.events;
     snapshot.length = 0;
-    assert.equal(sink.size, 1, "mutating the snapshot must not clear the buffer");
+    assert.equal(
+      sink.size,
+      1,
+      "mutating the snapshot must not clear the buffer",
+    );
   });
 
   it("rejects a sensitive-marker field that is not on the allowlist", () => {
@@ -929,7 +1024,11 @@ describe("AuditSink — closed enum and content-free guarantee", () => {
     });
     const snapshot = sink.exportDiagnostics();
     snapshot.length = 0;
-    assert.equal(sink.size, 1, "mutating exportDiagnostics must not clear the buffer");
+    assert.equal(
+      sink.size,
+      1,
+      "mutating exportDiagnostics must not clear the buffer",
+    );
   });
 });
 
@@ -949,7 +1048,9 @@ describe("Provider registry — Slice 3 fail-closed gate", () => {
         return { status: "enabled", providerId };
       },
     };
-    const service = new PrivacyTransactionService({ providerRegistry: registry });
+    const service = new PrivacyTransactionService({
+      providerRegistry: registry,
+    });
     const bound = service.prepare(makePrepareArgs({ providerId: "openai" }));
     assert.equal(bound.providerId, "openai");
   });
@@ -961,10 +1062,14 @@ describe("Provider registry — Slice 3 fail-closed gate", () => {
         return { status: "disabled", providerId };
       },
     };
-    const service = new PrivacyTransactionService({ providerRegistry: registry });
+    const service = new PrivacyTransactionService({
+      providerRegistry: registry,
+    });
     assert.throws(
       () => service.prepare(makePrepareArgs({ providerId: "minimax" })),
-      (err) => err instanceof ProviderDisabledError && err.code === "provider_disabled",
+      (err) =>
+        err instanceof ProviderDisabledError &&
+        err.code === "provider_disabled",
     );
   });
 });
@@ -976,9 +1081,11 @@ describe("PrivacyTransactionService — internal reverse map semantics", () => {
     // the same session never share reverse mappings.
     const service = makeService();
     const bound1 = service.prepare(makePrepareArgs());
-    const bound2 = service.prepare(makePrepareArgs({
-      operationCorrelationId: "550e8400-e29b-41d4-a716-446655440040",
-    }));
+    const bound2 = service.prepare(
+      makePrepareArgs({
+        operationCorrelationId: "550e8400-e29b-41d4-a716-446655440040",
+      }),
+    );
     assert.notEqual(bound1.transactionId, bound2.transactionId);
     // Two independent payloads with the same input must differ when the
     // per-transaction factor differs. The factors are random integers in
@@ -1051,9 +1158,13 @@ describe("PrivacyTransactionService.validateProviderResponse — WU-3C2 contract
     const reversedInvoiceNumber = tx.pseudonymizer.reverseDeep(
       outbound.fields.invoiceNumber,
     );
+    const reversedTaxLabel = tx.pseudonymizer.reverseDeep(
+      outbound.fields.taxLabel,
+    );
     assert.equal(result.fields.invoiceNumber, reversedInvoiceNumber);
-    assert.equal(result.fields.invoiceDate, outbound.fields.invoiceDate);
-    assert.equal(result.fields.taxLabel, outbound.fields.taxLabel);
+    assert.equal(outbound.fields.invoiceDate, "[DATE-2]");
+    assert.equal(result.fields.invoiceDate, "2026-01-15");
+    assert.equal(result.fields.taxLabel, reversedTaxLabel);
 
     // Amounts: the provider saw scaled values (e.g. "400.00") and the
     // validator's reverseDeep turns them back into the originals the
@@ -1216,7 +1327,10 @@ describe("Provider registry — Slice 6 fail-closed gate", () => {
     // Even a known provider like "minimax" (which the old CLI used) stays disabled.
     const minimax = registry.get("minimax");
     assert.equal(minimax.status, "disabled");
-    assert.ok(minimax.reason?.includes("pending"), "reason must reference the gate");
+    assert.ok(
+      minimax.reason?.includes("pending"),
+      "reason must reference the gate",
+    );
   });
 
   it("prepare with a disabled provider throws ProviderDisabledError before egress", () => {
@@ -1232,8 +1346,14 @@ describe("Provider registry — Slice 6 fail-closed gate", () => {
     // Slice 3 / Slice 6 fail-closed gate.
     assert.throws(
       () => service.prepare(makePrepareArgs({ providerId: "minimax" })),
-      (err) => err instanceof ProviderDisabledError && err.code === "provider_disabled",
+      (err) =>
+        err instanceof ProviderDisabledError &&
+        err.code === "provider_disabled",
     );
-    assert.equal(service.size, 0, "no transaction should be stored for a disabled provider");
+    assert.equal(
+      service.size,
+      0,
+      "no transaction should be stored for a disabled provider",
+    );
   });
 });

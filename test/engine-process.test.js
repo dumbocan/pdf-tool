@@ -8,7 +8,9 @@ import { parseFrame, MAX_RESPONSE_BYTES } from "../src/engine-protocol.js";
 
 const PDF_FIXTURE = "test/fixtures/A-G2026-245895.pdf";
 const PDF_FIXTURE_BYTES = readFileSync(PDF_FIXTURE);
-const PDF_FAKE = Buffer.from("%PDF-1.4 fake minimal test content for engine-stdio");
+const PDF_FAKE = Buffer.from(
+  "%PDF-1.4 fake minimal test content for engine-stdio",
+);
 const NETWORK_DENY = "./test/fixtures/network-deny.mjs";
 const ENGINE_ENTRYPOINT = "bin/pdf-tool-engine.mjs";
 const PACKAGE = JSON.parse(readFileSync("package.json", "utf8"));
@@ -21,8 +23,13 @@ function makeRequest(pdf = PDF_FAKE, overrides = {}) {
     protocolVersion: 1,
     kind: "extractLocal",
     requestId: REQ_ID,
-    document: { name: "invoice.pdf", byteLength: pdf.length, sha256,
-      pdfBase64: pdf.toString("base64"), ...doc },
+    document: {
+      name: "invoice.pdf",
+      byteLength: pdf.length,
+      sha256,
+      pdfBase64: pdf.toString("base64"),
+      ...doc,
+    },
     limits: { maxPages: 100, maxChars: 80_000 },
     ...overrides,
   };
@@ -37,17 +44,27 @@ function frameMessage(obj) {
 }
 
 function runAdapter(inputBuf, opts = {}) {
-  const { extraEnv = {}, nodeOptions = [], entrypoint = ENGINE_ENTRYPOINT } = opts;
+  const {
+    extraEnv = {},
+    nodeOptions = [],
+    entrypoint = ENGINE_ENTRYPOINT,
+  } = opts;
   return new Promise((resolve) => {
     const proc = spawn(process.execPath, [...nodeOptions, entrypoint], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...extraEnv },
     });
-    const stdout = [], stderr = [];
+    const stdout = [],
+      stderr = [];
     proc.stdout.on("data", (d) => stdout.push(d));
     proc.stderr.on("data", (d) => stderr.push(d));
     proc.on("close", (code) =>
-      resolve({ stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), code }));
+      resolve({
+        stdout: Buffer.concat(stdout),
+        stderr: Buffer.concat(stderr),
+        code,
+      }),
+    );
     proc.stdin.write(inputBuf);
     proc.stdin.end();
   });
@@ -56,14 +73,19 @@ function runAdapter(inputBuf, opts = {}) {
 async function runWith(req, opts = {}) {
   const { stdout, stderr, code } = await runAdapter(frameMessage(req), opts);
   let json = null;
-  try { json = parseFrame(stdout).json; } catch {}
+  try {
+    json = parseFrame(stdout).json;
+  } catch {}
   return { json, stderr: stderr.toString(), code, stdout };
 }
 
 async function loadFrameResponse() {
   const mod = await import("../src/engine-protocol.js");
-  assert.equal(typeof mod.frameResponse, "function",
-    "frameResponse must be exported from engine-protocol.js");
+  assert.equal(
+    typeof mod.frameResponse,
+    "function",
+    "frameResponse must be exported from engine-protocol.js",
+  );
   return mod.frameResponse;
 }
 
@@ -78,6 +100,15 @@ describe("pdf-tool-engine package entrypoint", () => {
     assert.equal(code, 0);
     assert.equal(json?.protocolVersion, 1);
     assert.equal(json?.kind, "extractLocal");
+  });
+
+  it("runs real OCR integration outside the parallel test lane", () => {
+    const script = PACKAGE.scripts.test;
+    assert.match(script, /name !== ['"]engine-stdio\.test\.js['"]/);
+    assert.match(
+      script,
+      /node --test --test-concurrency=1 test\/engine-stdio\.test\.js/,
+    );
   });
 
   it("preserves protocol-version errors through the stable executable", async () => {
@@ -115,15 +146,23 @@ describe("pdf-tool-engine package entrypoint", () => {
 describe("WU-1C3 frameResponse caps at MAX_RESPONSE_BYTES", () => {
   it("does not throw when payload exceeds 1 MB; returns capped buffer", async () => {
     const frameResponse = await loadFrameResponse();
-    const buf = frameResponse({ protocolVersion: 1, kind: "extractLocal",
-      requestId: REQ_ID, text: "A".repeat(MAX_RESPONSE_BYTES + 1000) });
+    const buf = frameResponse({
+      protocolVersion: 1,
+      kind: "extractLocal",
+      requestId: REQ_ID,
+      text: "A".repeat(MAX_RESPONSE_BYTES + 1000),
+    });
     assert.ok(buf.readUInt32BE(0) <= MAX_RESPONSE_BYTES);
   });
 
   it("truncates text, sets truncated=true, stays within cap", async () => {
     const frameResponse = await loadFrameResponse();
-    const buf = frameResponse({ protocolVersion: 1, kind: "extractLocal",
-      requestId: REQ_ID, text: "B".repeat(MAX_RESPONSE_BYTES + 5000) });
+    const buf = frameResponse({
+      protocolVersion: 1,
+      kind: "extractLocal",
+      requestId: REQ_ID,
+      text: "B".repeat(MAX_RESPONSE_BYTES + 5000),
+    });
     const { json } = parseFrame(buf);
     assert.equal(json.truncated, true);
     assert.ok(json.text.length < MAX_RESPONSE_BYTES + 5000);
@@ -131,8 +170,13 @@ describe("WU-1C3 frameResponse caps at MAX_RESPONSE_BYTES", () => {
 
   it("returns error envelope when non-text fields exceed the cap", async () => {
     const frameResponse = await loadFrameResponse();
-    const buf = frameResponse({ protocolVersion: 1, kind: "extractLocal",
-      requestId: REQ_ID, text: "", padding: "X".repeat(MAX_RESPONSE_BYTES + 100) });
+    const buf = frameResponse({
+      protocolVersion: 1,
+      kind: "extractLocal",
+      requestId: REQ_ID,
+      text: "",
+      padding: "X".repeat(MAX_RESPONSE_BYTES + 100),
+    });
     const { json } = parseFrame(buf);
     assert.equal(json.status, "error");
     assert.equal(json.error, "response_exceeds_limit");
@@ -140,7 +184,12 @@ describe("WU-1C3 frameResponse caps at MAX_RESPONSE_BYTES", () => {
 
   it("passes through small payloads unchanged", async () => {
     const frameResponse = await loadFrameResponse();
-    const small = { protocolVersion: 1, kind: "extractLocal", requestId: REQ_ID, text: "hello" };
+    const small = {
+      protocolVersion: 1,
+      kind: "extractLocal",
+      requestId: REQ_ID,
+      text: "hello",
+    };
     const { json } = parseFrame(frameResponse(small));
     assert.deepEqual(json, small);
   });
@@ -148,9 +197,15 @@ describe("WU-1C3 frameResponse caps at MAX_RESPONSE_BYTES", () => {
   it("payload exactly at MAX_RESPONSE_BYTES is not truncated", async () => {
     const frameResponse = await loadFrameResponse();
     const text = "C".repeat(MAX_RESPONSE_BYTES - 80); // leaves room for other fields
-    const obj = { protocolVersion: 1, kind: "extractLocal", requestId: REQ_ID, text };
+    const obj = {
+      protocolVersion: 1,
+      kind: "extractLocal",
+      requestId: REQ_ID,
+      text,
+    };
     const payloadLen = Buffer.byteLength(JSON.stringify(obj), "utf8");
-    if (payloadLen <= MAX_RESPONSE_BYTES) { // only assert if it fits
+    if (payloadLen <= MAX_RESPONSE_BYTES) {
+      // only assert if it fits
       const { json } = parseFrame(frameResponse(obj));
       assert.equal(json.truncated, undefined);
     }
@@ -161,8 +216,12 @@ describe("WU-1C3 frameResponse caps at MAX_RESPONSE_BYTES", () => {
 
 describe("WU-1C3 provider/OCR env var stripping", () => {
   it("strips provider env vars and logs to stderr", async () => {
-    const { code, stderr } = await runWith(makeRequest(PDF_FAKE),
-      { extraEnv: { OPENAI_API_KEY: "sk-test-123", ANTHROPIC_API_KEY: "secret-val" } });
+    const { code, stderr } = await runWith(makeRequest(PDF_FAKE), {
+      extraEnv: {
+        OPENAI_API_KEY: "sk-test-123",
+        ANTHROPIC_API_KEY: "secret-val",
+      },
+    });
     assert.equal(code, 0);
     assert.match(stderr, /stripped/);
     assert.match(stderr, /OPENAI_API_KEY/);
@@ -170,24 +229,33 @@ describe("WU-1C3 provider/OCR env var stripping", () => {
   });
 
   it("strips OCR env vars and logs to stderr", async () => {
-    const { code, stderr } = await runWith(makeRequest(PDF_FAKE),
-      { extraEnv: { GOOGLE_APPLICATION_CREDENTIALS: "/secret", AZURE_AI_KEY: "key" } });
+    const { code, stderr } = await runWith(makeRequest(PDF_FAKE), {
+      extraEnv: {
+        GOOGLE_APPLICATION_CREDENTIALS: "/secret",
+        AZURE_AI_KEY: "key",
+      },
+    });
     assert.equal(code, 0);
     assert.match(stderr, /stripped/);
     assert.match(stderr, /GOOGLE_APPLICATION_CREDENTIALS/);
   });
 
   it("never leaks env var values into stderr", async () => {
-    const { stderr } = await runWith(makeRequest(PDF_FAKE),
-      { extraEnv: { OPENAI_API_KEY: "sk-leaked-val", GOOGLE_API_KEY: "g-leaked" } });
+    const { stderr } = await runWith(makeRequest(PDF_FAKE), {
+      extraEnv: { OPENAI_API_KEY: "sk-leaked-val", GOOGLE_API_KEY: "g-leaked" },
+    });
     assert.doesNotMatch(stderr, /sk-leaked-val/);
     assert.doesNotMatch(stderr, /g-leaked/);
   });
 
   it("strips combined provider + OCR vars in one run", async () => {
     const { code, json, stderr } = await runWith(makeRequest(PDF_FAKE), {
-      extraEnv: { OPENAI_API_KEY: "sk-x", GOOGLE_APPLICATION_CREDENTIALS: "/c.json",
-        AZURE_AI_KEY: "k", COHERE_API_KEY: "c" },
+      extraEnv: {
+        OPENAI_API_KEY: "sk-x",
+        GOOGLE_APPLICATION_CREDENTIALS: "/c.json",
+        AZURE_AI_KEY: "k",
+        COHERE_API_KEY: "c",
+      },
     });
     assert.equal(code, 0);
     assert.match(stderr, /stripped/);
@@ -207,8 +275,9 @@ describe("WU-1C3 provider/OCR env var stripping", () => {
 
 describe("WU-1C3 network-free deterministic extraction", () => {
   it("extracts real PDF text with outbound sockets blocked via --import", async () => {
-    const { code, json } = await runWith(makeRequest(PDF_FIXTURE_BYTES),
-      { nodeOptions: [`--import=${NETWORK_DENY}`] });
+    const { code, json } = await runWith(makeRequest(PDF_FIXTURE_BYTES), {
+      nodeOptions: [`--import=${NETWORK_DENY}`],
+    });
     assert.equal(code, 0);
     assert.equal(json?.status, "ok");
     assert.ok(json?.text?.length > 0);
@@ -217,8 +286,10 @@ describe("WU-1C3 network-free deterministic extraction", () => {
   });
 
   it("provider env vars do not affect deterministic extraction", async () => {
-    const { code, json, stderr } = await runWith(makeRequest(PDF_FIXTURE_BYTES),
-      { extraEnv: { OPENAI_API_KEY: "sk-leaked", GOOGLE_API_KEY: "g-leaked" } });
+    const { code, json, stderr } = await runWith(
+      makeRequest(PDF_FIXTURE_BYTES),
+      { extraEnv: { OPENAI_API_KEY: "sk-leaked", GOOGLE_API_KEY: "g-leaked" } },
+    );
     assert.equal(code, 0);
     assert.equal(json?.status, "ok");
     assert.equal(json?.confidence, "deterministic");
@@ -231,7 +302,9 @@ describe("WU-1C3 network-free deterministic extraction", () => {
 
 describe("WU-1C3 crash handling, EOF, stream separation", () => {
   it("exits non-zero with empty stdout on garbage input", async () => {
-    const { code, stdout } = await runAdapter(Buffer.from("not a framed message"));
+    const { code, stdout } = await runAdapter(
+      Buffer.from("not a framed message"),
+    );
     assert.notEqual(code, 0);
     assert.equal(stdout.length, 0);
   });
@@ -243,7 +316,8 @@ describe("WU-1C3 crash handling, EOF, stream separation", () => {
   });
 
   it("exits non-zero on truncated frame", async () => {
-    const buf = Buffer.alloc(4); buf.writeUInt32BE(100, 0);
+    const buf = Buffer.alloc(4);
+    buf.writeUInt32BE(100, 0);
     const { code, stdout } = await runAdapter(buf);
     assert.notEqual(code, 0);
     assert.equal(stdout.length, 0);
@@ -254,12 +328,17 @@ describe("WU-1C3 crash handling, EOF, stream separation", () => {
     assert.equal(code, 0);
     const { json, bytes } = parseFrame(stdout);
     assert.ok(json);
-    assert.equal(4 + bytes, stdout.length, "stdout must contain exactly one frame");
+    assert.equal(
+      4 + bytes,
+      stdout.length,
+      "stdout must contain exactly one frame",
+    );
   });
 
   it("stderr activity does not corrupt stdout framing", async () => {
-    const { stdout, stderr, code } = await runWith(makeRequest(PDF_FAKE),
-      { extraEnv: { OPENAI_API_KEY: "sk-test" } });
+    const { stdout, stderr, code } = await runWith(makeRequest(PDF_FAKE), {
+      extraEnv: { OPENAI_API_KEY: "sk-test" },
+    });
     assert.equal(code, 0);
     const { json } = parseFrame(stdout);
     assert.ok(json, "stdout must be a valid frame even with stderr activity");
@@ -267,7 +346,10 @@ describe("WU-1C3 crash handling, EOF, stream separation", () => {
   });
 
   it("returns a bounded response instead of crashing on a valid large request", async () => {
-    const largePdf = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(3_200_000, "x")]);
+    const largePdf = Buffer.concat([
+      Buffer.from("%PDF-1.7\n"),
+      Buffer.alloc(3_200_000, "x"),
+    ]);
     const { code, json, stderr } = await runWith(makeRequest(largePdf));
     assert.equal(code, 0);
     assert.equal(json?.error, "pdf_parse_failed");
