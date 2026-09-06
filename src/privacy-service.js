@@ -389,18 +389,20 @@ function minimizePayload({ documentId, purpose, localExtraction, pseudonymizer }
     if (typeof invoice.invoiceNumber === "string" && invoice.invoiceNumber) {
       fields.invoiceNumber = pseudonymizer.pseudonymize(invoice.invoiceNumber);
     }
-    if (typeof invoice.invoiceDate === "string" && invoice.invoiceDate) {
-      fields.invoiceDate = invoice.invoiceDate;
-    }
-    if (
-      typeof invoice.simplifiedInvoiceDate === "string" &&
-      invoice.simplifiedInvoiceDate
-    ) {
-      fields.simplifiedInvoiceDate = invoice.simplifiedInvoiceDate;
-    }
-    if (typeof invoice.taxLabel === "string" && invoice.taxLabel) {
-      fields.taxLabel = invoice.taxLabel;
-    }
+        if (typeof invoice.invoiceDate === "string" && invoice.invoiceDate) {
+          fields.invoiceDate = pseudonymizer.pseudonymize(invoice.invoiceDate);
+        }
+        if (
+          typeof invoice.simplifiedInvoiceDate === "string" &&
+          invoice.simplifiedInvoiceDate
+        ) {
+          fields.simplifiedInvoiceDate = pseudonymizer.pseudonymize(
+            invoice.simplifiedInvoiceDate,
+          );
+        }
+        if (typeof invoice.taxLabel === "string" && invoice.taxLabel) {
+          fields.taxLabel = pseudonymizer.pseudonymize(invoice.taxLabel);
+        }
     if (invoice.totals && typeof invoice.totals === "object") {
       const totals = {};
       for (const key of ["subtotal", "tax", "total"]) {
@@ -455,6 +457,46 @@ function scrubPdfArtifacts(value) {
     out = out.replace(re, `[${label}-REDACTED]`);
   }
   return out;
+}
+
+// Build the per-field consent preview from the minimized (already
+// pseudonymized) fields. Every entry carries the EXACT fake value that will
+// egress plus how many local evidence fragments back the field; real values
+// are never included. Fields absent from the payload are omitted.
+function buildPseudonymizedPreview(fields, localExtraction) {
+  const preview = [];
+  if (!fields || typeof fields !== "object") return preview;
+  const matched = Array.isArray(localExtraction?.invoice?.matched)
+    ? localExtraction.invoice.matched
+    : [];
+  const evidenceCountFor = (label) => {
+    const entry = matched.find((m) =>
+      typeof m === "string" ? m === label : m?.label === label,
+    );
+    if (!entry || typeof entry !== "object") return 0;
+    if (Array.isArray(entry.evidence)) return entry.evidence.length;
+    return entry.bbox ? 1 : 0;
+  };
+  const push = (label, value) => {
+    if (typeof value !== "string" || value === "") return;
+    preview.push({
+      label,
+      pseudonymizedValue: value,
+      evidenceCount: evidenceCountFor(label),
+    });
+  };
+  for (const key of [
+    "invoiceNumber",
+    "invoiceDate",
+    "simplifiedInvoiceDate",
+    "taxLabel",
+  ]) {
+    push(key, fields[key]);
+  }
+  if (fields.totals && typeof fields.totals === "object") {
+    for (const key of ["subtotal", "tax", "total"]) push(key, fields.totals[key]);
+  }
+  return preview;
 }
 
 function scrubPayloadArtifacts(payload) {
@@ -816,6 +858,16 @@ export class PrivacyTransactionService {
     // opaque redaction markers. The canonical form is preserved.
     const scrubbed = scrubPayloadArtifacts(payload);
 
+    // Human-reviewable preview of EXACTLY the pseudonymized field values that
+    // will egress (the scrubbed payload is what gets hashed and later sent).
+    // Only the fakes the engine already produced cross this boundary — real
+    // values never do. The modal shows this list so the user consents to the
+    // literal bytes, not to a generic GDPR notice.
+    const pseudonymizedFields = buildPseudonymizedPreview(
+      scrubbed.fields,
+      localExtraction,
+    );
+
     const exactPayloadBytes = Buffer.from(canonicalize(scrubbed), "utf8");
     const payloadSha256 = sha256Hex(exactPayloadBytes);
 
@@ -867,6 +919,7 @@ export class PrivacyTransactionService {
       providerId,
       modelId,
       purpose,
+      pseudonymizedFields,
       disclosure: {
         version: disclosureVersion,
         transformedPolicyVersion,

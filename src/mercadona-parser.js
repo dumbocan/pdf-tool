@@ -16,14 +16,31 @@ const TAX = String.raw`[A-Z][A-Z0-9 ()\.%]{0,8}`;
 // so the regex cannot bridge across unrelated rows.
 const MERCADONA_ITEM_RE = new RegExp(
   String.raw`(?<desc>[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ0-9 \t\.\-/():,°ª%&'+]{0,120}?)[ \t]+` +
-  String.raw`(?<units>[0-9]+(?:[.,][0-9]+)?)[ \t]+` +
-  String.raw`(?<pu>${NUM})[ \t]+` +
-  String.raw`(?<bi>${NUM})[ \t]+` +
-  String.raw`(?<tax>${TAX})[ \t]+` +
-  String.raw`(?<cuota>${NUM})[ \t]+` +
-  String.raw`(?<imp>${NUM})`,
+    String.raw`(?<units>[0-9]+(?:[.,][0-9]+)?)[ \t]+` +
+    String.raw`(?<pu>${NUM})[ \t]+` +
+    String.raw`(?<bi>${NUM})[ \t]+` +
+    String.raw`(?<tax>${TAX})[ \t]+` +
+    String.raw`(?<cuota>${NUM})[ \t]+` +
+    String.raw`(?<imp>${NUM})`,
   "g",
 );
+
+// Redaction tokens that must never appear in a product description.
+// These are produced by PII-sanitization layers (phone, email, url, fiscal IDs).
+const REDACTION_TOKEN_RE =
+  /\[(?:PHONE|EMAIL|URL|NIF|CIF|CUIT|RUT|NIT|RFC|RUC|IBAN)(?:-\d+)?\]/g;
+
+// Strips redaction tokens from a description and normalizes whitespace.
+// Used as a fallback when the raw text reached the parser already sanitized
+// by an upstream layer (e.g. outlook-mail sidecar -> pdf-tool sidecar).
+function cleanRedactedDescription(desc) {
+  const cleaned = desc
+    .replace(REDACTION_TOKEN_RE, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  // After stripping tokens the desc may become too short or empty.
+  return cleaned;
+}
 
 // desc fragments we never want to match as a product. They appear in
 // headers, footers, address blocks, and trust-boundary blurbs.
@@ -60,6 +77,7 @@ function isPlausibleDescription(desc) {
   const trimmed = desc.trim();
   if (trimmed.length < 3) return false;
   if (trimmed.length > 60) return false;
+  if (REDACTION_TOKEN_RE.test(trimmed)) return false;
   // Reject any description that looks like a header/footer/address fragment.
   const upper = trimmed.toUpperCase();
   for (const kw of FORBIDDEN_DESC) {
@@ -94,6 +112,16 @@ function extractItemRegion(rawText) {
       break;
     }
   }
+  // Fallback: flexible regex header detection for PDFs with variable spacing
+  // between columns (e.g. 3+ spaces from pdfjs text extraction).
+  if (start === 0) {
+    const headerMatch = rawText.match(
+      /Descripción\s+Unid\.\s+P\.Unitario\s+B\.Imp\.\s+IGIC\s+Cuota\s+IGIC\s+Importe/,
+    );
+    if (headerMatch) {
+      start = headerMatch.index + headerMatch[0].length;
+    }
+  }
   // Fallback: if the column header is unrecognised, take the entire text.
   // The regex global + plausibility filter will still skip bogus matches.
   if (start === 0) return rawText;
@@ -114,7 +142,24 @@ function extractItemRegion(rawText) {
   // Cap the scanned region so a crafted PDF with no totals marker cannot turn
   // the regex into a super-linear CPU burn (bounded worst case).
   const MAX_REGION = 60_000;
-  return rawText.slice(start, Math.min(end, start + MAX_REGION));
+  let region = rawText.slice(start, Math.min(end, start + MAX_REGION));
+  // Sanitize any remaining page headers inside the region (e.g. page 2 header
+  // when page 1 header was used to set start). Without this, the global regex
+  // can span across the header row and consume the first item of the next page
+  // as part of a giant bogus description.
+  region = region.replace(
+    /Descripción\s+Unid\.\s+P\.Unitario\s+B\.Imp\.\s+IGIC\s+Cuota\s+IGIC\s+Importe/g,
+    " ",
+  );
+  // Break spans across metadata-to-product boundaries on continuation pages.
+  // pdfjs may emit metadata dates immediately before the next page's header and
+  // first item; inserting a newline prevents the desc group from spanning across
+  // that boundary (desc does not include \n).
+  region = region.replace(
+    /(factura\s+simplificada:\s*\d{2}\/\d{2}\/\d{4})/gi,
+    "$1\n",
+  );
+  return region;
 }
 
 export function parseMercadonaLines(rawText) {
@@ -123,7 +168,13 @@ export function parseMercadonaLines(rawText) {
   let skipped = 0;
   const region = extractItemRegion(rawText);
   for (const m of region.matchAll(MERCADONA_ITEM_RE)) {
-    const desc = m.groups.desc.replace(/\s+/g, " ").trim();
+    let desc = m.groups.desc.replace(/\s+/g, " ").trim();
+    // Invoice-safe fallback: if an upstream sanitization layer already
+    // injected redaction tokens into the description, strip them and retry
+    // plausibility. This preserves the line item instead of silently dropping it.
+    if (REDACTION_TOKEN_RE.test(desc)) {
+      desc = cleanRedactedDescription(desc);
+    }
     if (!isPlausibleDescription(desc)) {
       skipped += 1;
       continue;
@@ -151,5 +202,3 @@ export function parseMercadonaLines(rawText) {
     },
   };
 }
-
-export const _internal = { MERCADONA_ITEM_RE, isPlausibleDescription, FORBIDDEN_DESC };

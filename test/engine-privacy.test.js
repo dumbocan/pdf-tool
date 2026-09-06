@@ -83,13 +83,58 @@ describe("WU-3D1 privacy sidecar: prepareLlmExtraction", () => {
         untrusted: true,
       },
     });
-    assert.equal(code, 0);
-    assert.equal(json.protocolVersion, 1);
-    assert.equal(json.kind, "prepareLlmExtraction");
-    assert.equal(json.requestId, REQ_ID);
-    assert.equal(json.status, "error");
-    assert.equal(json.error.code, "provider_disabled");
-  });
+        assert.equal(code, 0);
+        assert.equal(json.protocolVersion, 1);
+        assert.equal(json.kind, "prepareLlmExtraction");
+        assert.equal(json.requestId, REQ_ID);
+        assert.equal(json.status, "error");
+        assert.equal(json.error.code, "provider_disabled");
+      });
+
+      it("prepares a transaction when deepseek is the enabled provider", async () => {
+        const { json, code } = await runWith({
+          protocolVersion: 1,
+          kind: "prepareLlmExtraction",
+          requestId: REQ_ID,
+          documentId: VALID_DOC_ID,
+          providerId: "deepseek",
+          modelId: "deepseek-chat",
+          purpose: "extract_invoice",
+          disclosureVersion: "v1",
+          transformedPolicyVersion: "pseudonymize-v1",
+          operationCorrelationId: "cor_smoke_0000000000000000",
+          localExtraction: {
+            provenance: "local_deterministic",
+            documentSha256: "0".repeat(64),
+            status: "complete",
+            pagesProcessed: 1,
+            truncationReason: null,
+            extractionMode: "digital_text",
+            invoice: {
+              invoiceNumber: "F-1",
+              invoiceDate: "2024-01-15",
+              simplifiedInvoiceDate: "2024-01-15",
+              taxLabel: "IVA",
+              totals: { subtotal: "100.00", tax: "21.00", total: "121.00" },
+              matched: [
+                { label: "invoiceNumber", value: "F-1" },
+                { label: "invoiceDate", value: "2024-01-15" },
+              ],
+            },
+            untrusted: true,
+          },
+        });
+        assert.equal(code, 0);
+        assert.equal(json.status, "ok");
+        assert.equal(json.kind, "prepareLlmExtraction");
+        assert.equal(json.requestId, REQ_ID);
+        assert.ok(json.data.transactionId, "transactionId present");
+        assert.match(json.data.transactionId, /^[A-Za-z0-9_-]{22}$/);
+        assert.equal(json.data.providerId, "deepseek");
+        assert.equal(json.data.modelId, "deepseek-chat");
+        assert.equal(json.data.disclosure.providerId, "deepseek");
+        assert.ok(json.data.expiresAt, "expiresAt present");
+      });
 
   it("rejects unknown documentId with a typed protocol error", async () => {
     const { json } = await runWith({
@@ -182,7 +227,146 @@ describe("WU-3D1 privacy sidecar: validateLlmResponse", () => {
       responseBytesBase64: Buffer.from("{}").toString("base64"),
       contentType: "application/json",
     });
-    assert.equal(json.status, "error");
-    assert.equal(json.error.code, "tx_unknown");
-  });
-});
+        assert.equal(json.status, "error");
+        assert.equal(json.error.code, "tx_unknown");
+      });
+    });
+
+    describe("WU-3D1 persistent sidecar: prepare -> confirm share one process", () => {
+      // A persistent engine process keeps ONE module-level
+      // PrivacyTransactionService alive across frames. prepare() binds a
+      // transaction in frame 1; confirm() must consume the SAME transaction in
+      // frame 2. With the one-shot process model this can never work (each
+      // frame would run in a fresh process+service), so this test proves the
+      // shared-service persistent loop.
+      function runPersistent() {
+        const proc = spawn(
+          "node",
+          ["src/engine-stdio.js"],
+          {
+            stdio: ["pipe", "pipe", "pipe"],
+            env: { ...process.env, PDF_TOOL_ENGINE_PERSISTENT: "1" },
+          },
+        );
+        const stderr = [];
+        proc.stderr.on("data", (d) => stderr.push(d));
+        const queue = [];
+        let buffer = Buffer.alloc(0);
+        let waiting = null;
+        proc.stdout.on("data", (chunk) => {
+          buffer = Buffer.concat([buffer, chunk]);
+          while (buffer.length >= 4) {
+            const len = buffer.readUInt32BE(0);
+            if (len === 0 || buffer.length < 4 + len) break;
+            const payload = buffer.subarray(4, 4 + len);
+            buffer = buffer.subarray(4 + len);
+            const framed = Buffer.alloc(4 + payload.length);
+            framed.writeUInt32BE(payload.length, 0);
+            payload.copy(framed, 4);
+            let json = null;
+            try {
+              json = parseFrame(framed).json;
+            } catch {
+              json = null;
+            }
+            if (waiting) {
+              const resolve = waiting;
+              waiting = null;
+              resolve(json);
+            } else {
+              queue.push(json);
+            }
+          }
+        });
+        return {
+          request(obj) {
+            return new Promise((resolve, reject) => {
+              if (queue.length > 0) {
+                resolve(queue.shift());
+                return;
+              }
+              const timer = setTimeout(
+                () => reject(new Error("persistent sidecar response timeout")),
+                15000,
+              );
+              waiting = (json) => {
+                clearTimeout(timer);
+                resolve(json);
+              };
+              proc.stdin.write(frameMessage(obj));
+            });
+          },
+          close() {
+            return new Promise((resolveClose) => {
+              proc.on("close", resolveClose);
+              proc.stdin.end();
+            });
+          },
+          get stderr() {
+            return Buffer.concat(stderr).toString();
+          },
+        };
+      }
+
+      const LOCAL_EXTRACTION = {
+        provenance: "local_deterministic",
+        documentSha256: "0".repeat(64),
+        status: "complete",
+        pagesProcessed: 1,
+        truncationReason: null,
+        extractionMode: "digital_text",
+        invoice: {
+          invoiceNumber: "F-1",
+          invoiceDate: "2024-01-15",
+          simplifiedInvoiceDate: "2024-01-15",
+          taxLabel: "IVA",
+          totals: { subtotal: "100.00", tax: "21.00", total: "121.00" },
+          matched: [
+            { label: "invoiceNumber", value: "F-1" },
+            { label: "invoiceDate", value: "2024-01-15" },
+          ],
+        },
+        untrusted: true,
+      };
+
+      it("confirm consumes the transaction prepared in the same process", async () => {
+        const engine = runPersistent();
+        try {
+          const prepare = await engine.request({
+            protocolVersion: 1,
+            kind: "prepareLlmExtraction",
+            requestId: REQ_ID,
+            documentId: VALID_DOC_ID,
+            providerId: "deepseek",
+            modelId: "deepseek-chat",
+            purpose: "extract_invoice",
+            disclosureVersion: "v1",
+            transformedPolicyVersion: "pseudonymize-v1",
+            operationCorrelationId: "cor_persist_0000000000000000",
+            localExtraction: LOCAL_EXTRACTION,
+          });
+          assert.equal(prepare.status, "ok", JSON.stringify(prepare));
+          const transactionId = prepare.data.transactionId;
+          assert.ok(transactionId, "prepare returned a transactionId");
+
+          const confirm = await engine.request({
+            protocolVersion: 1,
+            kind: "confirmLlmExtraction",
+            requestId: REQ_ID,
+            transactionId,
+          });
+          assert.equal(confirm.status, "ok", JSON.stringify(confirm));
+          assert.equal(
+            confirm.data.request.transactionId,
+            transactionId,
+            "confirm returned the same transaction",
+          );
+          assert.ok(
+            confirm.data.request.exactPayloadBytes,
+            "confirm returned exactPayloadBytes",
+          );
+        } finally {
+          await engine.close();
+        }
+      });
+    });

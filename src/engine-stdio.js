@@ -237,18 +237,69 @@ function boundedExtractionError(request, unit, count, correlation, startedAt) {
   };
 }
 
+function ocrResourceLimitError(request, limit, correlation, startedAt) {
+  emitDiagnostic("response_failed", "failed", {
+    errorCode: "ocr_resource_limit",
+    chars: limit + 1,
+  }, correlation, Date.now() - startedAt);
+  return {
+    protocolVersion: 1,
+    kind: "extractLocal",
+    requestId: request.requestId,
+    operationCorrelationId: correlation,
+    status: "error",
+    error: {
+      code: "ocr_resource_limit",
+      messageKey: "ocr_resource_limit",
+      retry: "user_action",
+      safeContext: { limit, unit: "characters", capability: "ocr" },
+    },
+  };
+}
+
 // Handle `prepareLlmExtraction`. The provider registry defaults to `disabled`,
 // so prepare() throws ProviderDisabledError before any payload is built. The
 // error envelope is mapped to the typed `ProviderDisabled` public error on
 // the Rust side; the rest of the privacy vocabulary maps to other typed
 // errors. Privacy invariant: this entry point never reads the document
 // (localExtraction is a stub or carries the cached local result).
-function handlePrepareLlmExtraction(request) {
-  const kind = "prepareLlmExtraction";
-  const service = new PrivacyTransactionService({
-    auditSink: new AuditSink(),
-    providerRegistry: createDefaultProviderRegistry(),
-  });
+    // LLM provider registry for privacy-gated extraction.  Abacus (the active
+        // provider) is enabled only when its API key is present, so a missing key
+        // fails closed rather than egressing without a credential.  DeepSeek stays
+        // as a fallback for the legacy smoke path; all other providers remain
+        // disabled (release-gate pending).
+        function createLlmProviderRegistry() {
+          const abacusEnabled = Boolean(process.env.ABACUS_API_KEY);
+          return {
+            get(providerId) {
+              if (providerId === "abacus") {
+                return abacusEnabled
+                  ? { status: "enabled", providerId, reason: null }
+                  : { status: "disabled", providerId, reason: "provider_key_missing" };
+              }
+              if (providerId === "deepseek") {
+                return { status: "enabled", providerId, reason: null };
+              }
+              return { status: "disabled", providerId, reason: "release_gate_pending" };
+            },
+          };
+        }
+
+    // Shared privacy service for the persistent sidecar mode.  A single
+    // module-level instance keeps prepare()/confirm()/validate() on the SAME
+    // in-memory transaction map across frames.  In one-shot mode (default)
+    // each process creates this once and handles a single request, so
+    // behavior is identical to per-handler construction; in persistent mode
+    // (PDF_TOOL_ENGINE_PERSISTENT=1) the same instance survives across
+    // frames and transactions created by prepare() are consumable by a later
+    // confirm() in the same process.
+    const sharedPrivacyService = new PrivacyTransactionService({
+      auditSink: new AuditSink(),
+      providerRegistry: createLlmProviderRegistry(),
+    });
+
+    function handlePrepareLlmExtraction(request, service = sharedPrivacyService) {
+      const kind = "prepareLlmExtraction";
   try {
     const result = service.prepare({
       documentId: request.documentId,
@@ -266,6 +317,7 @@ function handlePrepareLlmExtraction(request) {
       providerId: result.providerId,
       modelId: result.modelId,
       purpose: result.purpose,
+      pseudonymizedFields: result.pseudonymizedFields ?? [],
       disclosure: result.disclosure,
       expiresAt: result.expiresAt,
     });
@@ -285,12 +337,8 @@ function handlePrepareLlmExtraction(request) {
 // inside the service; any state failure surfaces as the shared typed
 // vocabulary (`tx_unknown`, `tx_mismatch`, `tx_expired`,
 // `provider_disabled`).
-function handleConfirmLlmExtraction(request) {
+function handleConfirmLlmExtraction(request, service = sharedPrivacyService) {
   const kind = "confirmLlmExtraction";
-  const service = new PrivacyTransactionService({
-    auditSink: new AuditSink(),
-    providerRegistry: createDefaultProviderRegistry(),
-  });
   try {
     const { request: payload } = service.confirm({
       transactionId: request.transactionId,
@@ -325,12 +373,8 @@ function handleConfirmLlmExtraction(request) {
   }
 }
 
-function handleValidateLlmResponse(request) {
+function handleValidateLlmResponse(request, service = sharedPrivacyService) {
   const kind = "validateLlmResponse";
-  const service = new PrivacyTransactionService({
-    auditSink: new AuditSink(),
-    providerRegistry: createDefaultProviderRegistry(),
-  });
   try {
     const decoded = Buffer.from(request.responseBytesBase64 ?? "", "base64");
     const reversed = service.validateProviderResponse({
@@ -419,14 +463,135 @@ function normalizeScanned(buffer, request, reason) {
     source: "ocr_required_unavailable",
     confidence: "deterministic",
     sha256: createHash("sha256").update(buffer).digest("hex"),
-    trustBoundary: TRUST_BOUNDARY,
-    error: reason,
-  };
-}
+        trustBoundary: TRUST_BOUNDARY,
+        error: reason,
+      };
+    }
 
-async function main() {
+    // Persistent sidecar loop. Reads a stream of length-prefixed frames from
+    // stdin, dispatches ONLY the privacy operations (prepare/confirm/validate)
+    // through the shared module-level PrivacyTransactionService, writes each
+    // framed response to stdout WITHOUT exiting, and continues until stdin
+    // closes. Every other operation kind is rejected with a typed error so the
+    // loop never reaches the one-shot extraction/learned dispatchers that
+    // terminate the process.
+    function dispatchPrivacyFrame(request) {
+      switch (request?.kind) {
+        case "prepareLlmExtraction":
+          return handlePrepareLlmExtraction(request);
+        case "confirmLlmExtraction":
+          return handleConfirmLlmExtraction(request);
+        case "validateLlmResponse":
+          return handleValidateLlmResponse(request);
+        default:
+          return {
+            protocolVersion: 1,
+            kind: request?.kind ?? "unknown",
+            requestId: request?.requestId ?? null,
+            status: "error",
+            error: {
+              code: "kind_unsupported",
+              message: `persistent mode does not dispatch ${String(
+                request?.kind,
+              )}`,
+            },
+          };
+      }
+    }
+
+    // Pull one complete 4-byte length-prefixed frame out of the accumulated
+    // buffer. Returns { frame } or null when fewer than 4+len bytes are ready.
+    function readFrameFromBuffer(state) {
+      const buf = state.buffer;
+      if (buf.length < 4) return null;
+      const len = buf.readUInt32BE(0);
+      if (len === 0 || len > MAX_RESPONSE_BYTES) {
+        const error = new Error("frame_too_large");
+        error.code = "frame_too_large";
+        throw error;
+      }
+      if (buf.length < 4 + len) return null;
+      const frame = buf.subarray(0, 4 + len);
+      state.buffer = buf.subarray(4 + len);
+      return frame;
+    }
+
+    async function runPersistentLoop() {
+      const startedAt = Date.now();
+      const state = { buffer: Buffer.alloc(0) };
+      const deadlineMs = MAX_OPERATION_DEADLINE_MS;
+      // A per-frame deadline guarantees a malformed/incomplete frame cannot
+      // hang the persistent process forever.
+      let frameDeadline = null;
+      const armFrameDeadline = () => {
+        if (frameDeadline) clearTimeout(frameDeadline);
+        frameDeadline = setTimeout(() => {
+          emitDiagnostic(
+            "response_failed",
+            "failed",
+            { errorCode: "timeout" },
+            "cor_persistent_loop",
+            deadlineMs,
+          );
+          process.exit(1);
+        }, deadlineMs);
+      };
+
+      for await (const chunk of process.stdin) {
+        state.buffer = Buffer.concat([state.buffer, chunk]);
+        for (;;) {
+          let frame;
+          try {
+            frame = readFrameFromBuffer(state);
+          } catch (error) {
+            emitDiagnostic(
+              "response_failed",
+              "failed",
+              { errorCode: error?.code ?? "protocol_mismatch" },
+              "cor_persistent_loop",
+              Date.now() - startedAt,
+            );
+            process.exit(1);
+          }
+          if (!frame) break;
+          armFrameDeadline();
+          let request = null;
+          try {
+            request = parseFrame(frame).json;
+          } catch {
+            process.stdout.write(
+              frameResponse(protocolMismatchResponse({ requestId: null })),
+            );
+            continue;
+          }
+          const correlationId =
+            request?.operationCorrelationId ?? "cor_persistent_loop";
+          const response = dispatchPrivacyFrame(request);
+          process.stdout.write(frameResponse(response));
+          emitDiagnostic(
+            "response_completed",
+            "success",
+            { kind: request?.kind ?? "unknown" },
+            correlationId,
+            Date.now() - startedAt,
+          );
+        }
+      }
+      if (frameDeadline) clearTimeout(frameDeadline);
+      sharedPrivacyService.clear("shutdown");
+      process.exit(0);
+    }
+
+    async function main() {
   const startedAt = Date.now();
   let operationCorrelationId = createOperationCorrelationId();
+
+  // Persistent mode: handle multiple length-prefixed frames on one process
+  // so privacy transactions survive across prepare()/confirm() calls.
+  if (process.env.PDF_TOOL_ENGINE_PERSISTENT === "1") {
+return runPersistentLoop();
+  }
+
   let raw;
   try {
     raw = await readStdin();
@@ -592,13 +757,16 @@ async function main() {
       emitDiagnostic("response_failed", "failed", { errorCode: ocr.error ?? "ocr_empty" }, operationCorrelationId, Date.now() - startedAt);
       return sendResponse(normalizeScanned(decoded, request, ocr.error ?? "ocr_empty"));
     }
+    if (ocr.text.length > maxChars) {
+      return sendResponse(ocrResourceLimitError(request, maxChars, operationCorrelationId, startedAt));
+    }
     emitDiagnostic("ocr_completed", "success", { pages: 1, chars: ocr.text.length, extractionMode: "ocr" }, operationCorrelationId, Date.now() - startedAt);
     const fields = isInvoiceLikeText(ocr.text) ? extractInvoiceFields(ocr.text) : extractInvoiceFields("");
     emitDiagnostic("fields_matched", "success", { matched: fields?.matched?.length ?? 0, bboxMissing: fields?.matched?.length ?? 0, matchedLabels: fields?.matched?.map((field) => field.label) ?? [] }, operationCorrelationId, Date.now() - startedAt);
     return sendResponse(normalizeResult(decoded, {
       text: ocr.text,
       pages: 1,
-      truncated: ocr.text.length >= maxChars,
+      truncated: false,
       invoiceFields: fields,
       extractionMode: "ocr",
     }, request));

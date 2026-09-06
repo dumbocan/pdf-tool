@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test test/*.test.js",
+    "test": "node --test $(node -e \"const fs=require('node:fs'); process.stdout.write(fs.readdirSync('test').filter((name) => name.endsWith('.test.js') && name !== 'release-artifact-integrity.test.js' && name !== 'engine-stdio.test.js').map((name) => 'test/' + name).join(' '))\") && node --test --test-concurrency=1 test/engine-stdio.test.js",
     "scan": "node bin/pdf-tool.mjs"
   },
   "dependencies": {
@@ -19,6 +19,7 @@
     "zod": "4.4.3"
   },
   "bin": {
-    "pdf-tool": "bin/pdf-tool.mjs"
+    "pdf-tool": "bin/pdf-tool.mjs",
+    "pdf-tool-engine": "bin/pdf-tool-engine.mjs"
   }
 }

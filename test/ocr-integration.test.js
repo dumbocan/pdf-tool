@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { extractOcrFromPdfPage } from "../src/extract.js";
+import { parseFrame } from "../src/engine-protocol.js";
 
 const fixture = readFileSync("test/fixtures/ocr-placeholder-image.pdf");
 
@@ -91,4 +94,49 @@ test("OCR timeout kills the active child and returns a typed bounded error", asy
   assert.equal(result.error, "ocr_timeout");
   assert.equal(result.text, "");
   assert.equal(killCount, 1);
+});
+
+function frameRequest(pdf, maxChars) {
+  const request = {
+    protocolVersion: 1,
+    kind: "extractLocal",
+    requestId: "550e8400-e29b-41d4-a716-446655440000",
+    document: {
+      name: "scan.pdf",
+      byteLength: pdf.length,
+      sha256: createHash("sha256").update(pdf).digest("hex"),
+      pdfBase64: pdf.toString("base64"),
+    },
+    limits: { maxPages: 100, maxChars },
+  };
+  const payload = Buffer.from(JSON.stringify(request), "utf8");
+  const frame = Buffer.alloc(payload.length + 4);
+  frame.writeUInt32BE(payload.length, 0);
+  payload.copy(frame, 4);
+  return frame;
+}
+
+function runEngine(input) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, ["bin/pdf-tool-engine.mjs"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const stdout = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.on("close", (code) => {
+      const output = Buffer.concat(stdout);
+      resolve({ code, json: parseFrame(output).json });
+    });
+    child.stdin.end(input);
+  });
+}
+
+test("engine returns a typed failure when OCR would exceed retained text bound", async () => {
+  const result = await runEngine(frameRequest(fixture, 10));
+
+  assert.equal(result.code, 0);
+  assert.equal(result.json.status, "error");
+  assert.equal(result.json.error.code, "ocr_resource_limit");
+  assert.equal(result.json.error.safeContext.limit, 10);
+  assert.equal("text" in result.json, false);
 });
