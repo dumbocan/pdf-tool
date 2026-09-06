@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { extractInvoiceFieldsFromLines, extractOcrFromPdfPage, extractTextFromPdf, PdfExtractionError } from "./extract.js";
+import { extractInvoiceFields, extractInvoiceFieldsFromLines, extractOcrFromPdfPage, extractTextFromPdf, PdfExtractionError } from "./extract.js";
 import { detectVendor } from "./vendor-parsers.js";
 
 const ISO_SNAPSHOT = JSON.parse(readFileSync(resolve(import.meta.dirname, "../contracts/invoice-learning/v1/iso-4217-snapshot.json"), "utf8"));
@@ -200,15 +200,7 @@ function lineSource(lines, expression) {
   return lines.find((line) => expression.test(line.text)) ?? null;
 }
 
-function valueFromLine(lines, expression, normalizer) {
-  const source = lineSource(lines, expression);
-  if (!source) return { value: null, source: null };
-  const match = source.text.match(expression);
-  return { value: normalizer(match?.[1] ?? ""), source };
-}
-
 const ROW_NUMBER = "[+-]?(?:\\d{1,3}(?:\\.\\d{3})+|\\d+)(?:[.,]\\d{1,6})?";
-const HEADER_WORDS = ["description", "quantity", "unit price", "line total"];
 const OCR_HEADER_WORDS = ["description", "qty", "quantity", "unit", "price", "amount", "line"];
 const COLUMN_IDENTIFIERS = ["description", "quantity", "unitPrice"];
 
@@ -261,12 +253,6 @@ function makeRow(description, quantity, unitPrice, source, ordinal, cellFragment
     quantity: envelope(quantity, fragments[1]),
     unitPrice: envelope(unitPrice, fragments[2]),
   };
-}
-
-function headerInfo(text) {
-  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
-  const counts = HEADER_WORDS.map((word) => normalized.split(word).length - 1);
-  return { isHeader: counts.every((count) => count > 0), ambiguous: counts.some((count) => count > 1) };
 }
 
 function ocrHeaderInfo(text) {
@@ -570,6 +556,8 @@ export async function extractInvoiceEvidence(buffer, { documentId, digitalExtrac
   let ocrTokens = [];
   let ocrConfidence = null;
   let positionalFields = null;
+  let regexFallbackFields = null;
+  let positionalExtractionValid = false;
   let ocrTextProvided = false;
   let pageCount = extracted.pages || 1;
   // Detect vendor and build extraction options once
@@ -585,6 +573,7 @@ export async function extractInvoiceEvidence(buffer, { documentId, digitalExtrac
     ocrTokens = Array.isArray(ocr?.tokens) ? ocr.tokens : [];
         try {
           positionalFields = extractInvoiceFieldsPositional({ tokens: ocrTokens, pageWidth: ocr?.pageWidth, pageHeight: ocr?.pageHeight }, extractionOptions);
+          positionalExtractionValid = true;
         } catch {
           positionalFields = null;
         }
@@ -593,9 +582,12 @@ export async function extractInvoiceEvidence(buffer, { documentId, digitalExtrac
       lines = materialized.lines;
       ocrTokens = materialized.tokens;
       text = typeof ocr?.text === "string" && ocr.text.trim() ? ocr.text : ocrTokens.map(({ token }) => token.text.trim()).join(" ");
+      if (positionalExtractionValid && positionalFields.matched.length === 0) {
+        regexFallbackFields = extractInvoiceFields(text);
+      }
       pageCount = materialized.pageCount;
       ocrConfidence = ocrConfidenceBps(ocrTokens);
-    } catch (error) {
+    } catch {
       lines = [];
       text = "";
       ocrTokens = [];
@@ -614,13 +606,24 @@ export async function extractInvoiceEvidence(buffer, { documentId, digitalExtrac
   const supplierId = supplierName ? "sc_0000000000000000" : null;
   const supplierFragments = supplierSource ? evidenceFragmentsFor(supplierSource, 0) : [];
   const supplierCandidate = supplierName && supplierFragments.length ? { supplierCandidateId: supplierId, displayName: supplierName, evidence: supplierFragments } : null;
-      const positionalSource = (name) => {
-        const match = positionalFields?.matched?.find((entry) => entry.label === name);
-        return positionalFields?.lines?.find((line) => Math.abs((line.bbox?.x ?? -1) - (match?.bbox?.x ?? -2)) < 0.01 && Math.abs((line.bbox?.y ?? -1) - (match?.bbox?.y ?? -2)) < 0.01) ?? null;
-      };
-      const positionalValue = (name) => {
-        const value = ["subtotal", "tax", "total"].includes(name) ? positionalFields?.totals?.[name] ?? null : positionalFields?.[name] ?? null;
+      const scalarFields = positionalFields?.matched?.length ? positionalFields : regexFallbackFields;
+      const scalarValue = (name) => {
+        const value = ["subtotal", "tax", "total"].includes(name) ? scalarFields?.totals?.[name] ?? null : scalarFields?.[name] ?? null;
         return ["subtotal", "tax", "total"].includes(name) ? canonicalNumber(value, 4) : value;
+      };
+      const scalarSource = (name) => {
+        const match = scalarFields?.matched?.find((entry) => entry.label === name);
+        if (!match) return null;
+        if (match.bbox) {
+          return positionalFields?.lines?.find((line) => Math.abs((line.bbox?.x ?? -1) - match.bbox.x) < 0.01 && Math.abs((line.bbox?.y ?? -1) - match.bbox.y) < 0.01) ?? null;
+        }
+        const value = scalarValue(name);
+        if (value == null) return null;
+        const candidates = lines.filter((line) => {
+          const candidate = line.text.trim().replace(/^[\s$€]+|[\s$€]+$/g, "");
+          return candidate === String(value) || canonicalNumber(candidate, 4) === value;
+        });
+        return candidates.length === 1 ? candidates[0] : null;
       };
       const field = (expression, normalizer, ordinal, fallback = "NOT_FOUND") => {
     const source = lineSource(lines, expression);
@@ -633,12 +636,12 @@ export async function extractInvoiceEvidence(buffer, { documentId, digitalExtrac
   const currencyRaw = currencySource?.text.match(/currency\s*:\s*(\S+)/i)?.[1] ?? null;
   const record = {
     supplier: supplierName && supplierFragments.length ? PRESENT({ supplierCandidateId: supplierId, displayName: supplierName }, supplierFragments) : MISSING(supplierName ? "EVIDENCE_MISSING" : "NOT_FOUND"),
-    invoiceNumber: extractionMode === "OCR" && positionalFields?.matched?.length ? fieldEnvelope(positionalValue("invoiceNumber"), positionalSource("invoiceNumber"), 1) : field(/invoice\s+number\s*:\s*([^\s]+)/i, (v) => v.trim(), 1),
-    invoiceDate: extractionMode === "OCR" && positionalFields?.matched?.length ? fieldEnvelope(positionalValue("invoiceDate"), positionalSource("invoiceDate"), 2) : fieldEnvelope(dateRaw && validDate(dateRaw) ? dateRaw : null, dateSource, 2, dateRaw ? "INVALID_FORMAT" : "NOT_FOUND"),
+    invoiceNumber: extractionMode === "OCR" && scalarFields?.matched?.length ? fieldEnvelope(scalarValue("invoiceNumber"), scalarSource("invoiceNumber"), 1) : field(/invoice\s+number\s*:\s*([^\s]+)/i, (v) => v.trim(), 1),
+    invoiceDate: extractionMode === "OCR" && scalarFields?.matched?.length ? fieldEnvelope(scalarValue("invoiceDate"), scalarSource("invoiceDate"), 2) : fieldEnvelope(dateRaw && validDate(dateRaw) ? dateRaw : null, dateSource, 2, dateRaw ? "INVALID_FORMAT" : "NOT_FOUND"),
     currency: fieldEnvelope(currencyRaw && /^[A-Z]{3}$/.test(currencyRaw) && ISO_CODES.has(currencyRaw) ? currencyRaw : null, currencySource, 3, currencyRaw ? "UNSUPPORTED" : "NOT_FOUND"),
-    taxableBase: extractionMode === "OCR" && positionalValue("subtotal") != null ? fieldEnvelope(positionalValue("subtotal"), positionalSource("subtotal"), 4) : field(/taxable\s+base\s*:\s*([+-]?[\d.,]+)/i, (v) => canonicalNumber(v, 4), 4, "INVALID_FORMAT"),
-    taxes: extractionMode === "OCR" && positionalValue("tax") != null ? fieldEnvelope(positionalValue("tax"), positionalSource("tax"), 5) : field(/tax(?:es)?\s*:\s*([+-]?[\d.,]+)/i, (v) => canonicalNumber(v, 4), 5, "INVALID_FORMAT"),
-        total: extractionMode === "OCR" && positionalValue("total") != null ? fieldEnvelope(positionalValue("total"), positionalSource("total"), 6) : field(/^total\s*:\s*([+-]?[\d.,]+)/i, (v) => canonicalNumber(v, 4), 6, "INVALID_FORMAT"),
+    taxableBase: extractionMode === "OCR" && scalarValue("subtotal") != null ? fieldEnvelope(scalarValue("subtotal"), scalarSource("subtotal"), 4) : field(/taxable\s+base\s*:\s*([+-]?[\d.,]+)/i, (v) => canonicalNumber(v, 4), 4, "INVALID_FORMAT"),
+    taxes: extractionMode === "OCR" && scalarValue("tax") != null ? fieldEnvelope(scalarValue("tax"), scalarSource("tax"), 5) : field(/tax(?:es)?\s*:\s*([+-]?[\d.,]+)/i, (v) => canonicalNumber(v, 4), 5, "INVALID_FORMAT"),
+        total: extractionMode === "OCR" && scalarValue("total") != null ? fieldEnvelope(scalarValue("total"), scalarSource("total"), 6) : field(/^total\s*:\s*([+-]?[\d.,]+)/i, (v) => canonicalNumber(v, 4), 6, "INVALID_FORMAT"),
     lineItems: analysis.rows.length ? analysis.rows : [emptyRow(extractionMode === "OCR" && ocrTokens.length ? "EVIDENCE_MISSING" : "NOT_FOUND")],
   };
   const semanticReasons = [...analysis.reviewReasons];
